@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix Remix Remix Remix Remix Remix Remix Remix Remix منصة حوكمة جودة الانشاءات",
+  "description": "منصة ذكية لحوكمة جودة اعمال الانشاءات والتدقيق على أوامر العمل قبل إجراء 155",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

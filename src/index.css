@@ -1,0 +1,261 @@
+@import "tailwindcss";
+
+/* Intelligent Fluid Viewport Sizing & Auto-Containment for browser zoom & resize */
+html {
+  font-size: clamp(12px, 0.45vw + 9.5px, 15px);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+*, *::before, *::after {
+  box-sizing: inherit;
+  letter-spacing: normal !important; /* Preserve clean Arabic letter connections */
+}
+
+body {
+  overflow-x: hidden;
+  max-width: 100vw;
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+#root {
+  width: 100%;
+  max-width: 100vw;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+}
+
+/* Navbar smooth ticker animation for overflowing/hidden header text */
+@keyframes ticker-rtl {
+  0%, 15% {
+    transform: translateX(0%);
+  }
+  85%, 100% {
+    transform: translateX(35%);
+  }
+}
+
+.animate-ticker-rtl {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+  animation: ticker-rtl 10s ease-in-out infinite alternate;
+}
+
+/* Fluid responsive table containment: 100% width, smart distribution, auto wrap */
+.auto-fit-table {
+  width: 100% !important;
+  max-width: 100% !important;
+  table-layout: fixed !important;
+}
+
+.auto-fit-table th,
+.auto-fit-table td {
+  overflow-wrap: break-word;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+/* Cell text containment utility: prevents cutting off data while maintaining layout stability */
+.cell-containment {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.45;
+}
+
+/* Tabular figures for strict numerical alignment */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Container query utilities for adaptive component scaling */
+.responsive-app-container {
+  container-type: inline-size;
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Hide scrollbars across all browsers while maintaining smooth scrolling & adaptive touch/mouse navigation */
+.scrollbar-none::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none !important; /* IE and Edge */
+  scrollbar-width: none !important; /* Firefox */
+}
+
+/* Global clean scrollbar suppression for seamless app immersion */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.6);
+}
+
+/* Prominent horizontal scrollbar for data tables */
+.table-scroll-container::-webkit-scrollbar {
+  height: 10px !important;
+  width: 10px !important;
+  display: block !important;
+}
+
+.table-scroll-container::-webkit-scrollbar-track {
+  background: #f1f5f9 !important;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+}
+
+.table-scroll-container::-webkit-scrollbar-thumb {
+  background: #2563eb !important;
+  border-radius: 6px;
+}
+
+.table-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: #1d4ed8 !important;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+/* High-Precision Printing Styles: Guarantees zero cut-off, clean multi-page pagination, and full data containment */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 6mm 6mm 6mm 6mm;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 10pt !important;
+    overflow: visible !important;
+    max-width: none !important;
+    width: 100% !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  /* Table rules for print */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  th, td {
+    padding: 4px 6px !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+    white-space: normal !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .export-page-sheet {
+    page-break-after: always !important;
+    break-after: page !important;
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}
+
+/* =========================================================================
+   Platform Table Grid Lines & Typography System (Accessible Classic Design)
+   ========================================================================= */
+
+.sec-bold-table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  font-weight: 700 !important;
+}
+
+.sec-bold-table th {
+  font-weight: 900 !important;
+  border-bottom: 2.5px solid #94a3b8 !important;
+  border-right: 1px solid #cbd5e1 !important;
+  border-left: 1px solid #cbd5e1 !important;
+  letter-spacing: 0.01em;
+}
+
+.sec-bold-table td {
+  font-weight: 700 !important;
+  border-bottom: 1.5px solid #cbd5e1 !important;
+  border-right: 1px solid #cbd5e1 !important;
+  border-left: 1px solid #e2e8f0 !important;
+}
+
+.sec-bold-table tbody tr:hover td {
+  border-bottom-color: #94a3b8 !important;
+}
+
+.sec-bold-table tr td:first-child,
+.sec-bold-table tr th:first-child {
+  border-right: 2px solid #94a3b8 !important;
+}
+
+.sec-bold-table tr td:last-child,
+.sec-bold-table tr th:last-child {
+  border-left: 2px solid #94a3b8 !important;
+}
+
+.sec-bold-table input,
+.sec-bold-table button,
+.sec-bold-table span,
+.sec-bold-table div {
+  font-weight: 700;
+}
+
+

@@ -1,0 +1,312 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Pillar 1 & Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Hardened Global Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'engmhp1@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidServerVaultKey(vaultKey) {
+      return vaultKey is string &&
+        vaultKey.size() == 58 &&
+        vaultKey.matches('^[a-zA-Z0-9_\\-]+$') &&
+        vaultKey == 'sec_qcms_155_vault_c497b379_4418_4a34_9623_987a3f506df0_v1';
+    }
+
+    function parentVaultExists(vaultKey) {
+      return isValidServerVaultKey(vaultKey);
+    }
+
+    // Pillar 2 & 5: Validation Blueprint for ServerVaultManifest
+    function isValidServerVaultManifest(data) {
+      return data.keys().hasAll([
+          'vaultKey',
+          'version',
+          'updatedAtIso',
+          'workOrderCount',
+          'tableCount',
+          'userCount',
+          'chunkCount',
+          'chunkIds',
+          'coreJson'
+        ]) &&
+        data.keys().hasOnly([
+          'vaultKey',
+          'version',
+          'updatedAtIso',
+          'workOrderCount',
+          'tableCount',
+          'userCount',
+          'chunkCount',
+          'chunkIds',
+          'coreJson'
+        ]) &&
+        isValidServerVaultKey(data.vaultKey) &&
+        data.version is number && data.version >= 0 &&
+        data.updatedAtIso is string && data.updatedAtIso.size() >= 10 && data.updatedAtIso.size() <= 64 &&
+        data.workOrderCount is number && data.workOrderCount >= 0 &&
+        data.tableCount is number && data.tableCount >= 0 &&
+        data.userCount is number && data.userCount >= 0 &&
+        data.chunkCount is number && data.chunkCount >= 0 && data.chunkCount <= 500 &&
+        data.chunkIds is list && data.chunkIds.size() <= 500 &&
+        (data.chunkIds.size() == 0 || (data.chunkIds[0] is string && data.chunkIds[0].size() <= 128)) &&
+        data.coreJson is string && data.coreJson.size() >= 2 && data.coreJson.size() <= 900000;
+    }
+
+    // Pillar 2: Validation Blueprint for ServerVaultChunk
+    function isValidServerVaultChunk(data) {
+      return data.keys().hasAll([
+          'vaultKey',
+          'chunkId',
+          'chunkType',
+          'chunkIndex',
+          'version',
+          'updatedAtIso',
+          'payloadJson'
+        ]) &&
+        data.keys().hasOnly([
+          'vaultKey',
+          'chunkId',
+          'chunkType',
+          'chunkIndex',
+          'version',
+          'updatedAtIso',
+          'payloadJson'
+        ]) &&
+        isValidServerVaultKey(data.vaultKey) &&
+        isValidId(data.chunkId) &&
+        data.chunkType is string && data.chunkType.size() <= 32 &&
+        (data.chunkType == 'workOrders' || data.chunkType == 'customTemplate' || data.chunkType == 'extraCore') &&
+        data.chunkIndex is number && data.chunkIndex >= 0 && data.chunkIndex <= 500 &&
+        data.version is number && data.version >= 0 &&
+        data.updatedAtIso is string && data.updatedAtIso.size() >= 10 && data.updatedAtIso.size() <= 64 &&
+        data.payloadJson is string && data.payloadJson.size() >= 1 && data.payloadJson.size() <= 900000;
+    }
+
+    // Pillar 2: Validation Blueprint for ServerVaultLivePulse
+    function isValidServerVaultLivePulse(data) {
+      return data.keys().hasAll([
+          'vaultKey',
+          'pulseId',
+          'eventType',
+          'eventId',
+          'version',
+          'updatedAtIso',
+          'payloadJson'
+        ]) &&
+        data.keys().hasOnly([
+          'vaultKey',
+          'pulseId',
+          'eventType',
+          'eventId',
+          'senderId',
+          'senderName',
+          'senderEmail',
+          'senderRole',
+          'senderDevice',
+          'serverInstanceId',
+          'version',
+          'updatedAtIso',
+          'payloadJson'
+        ]) &&
+        isValidServerVaultKey(data.vaultKey) &&
+        (data.pulseId == 'sync' || isValidId(data.pulseId)) &&
+        data.eventType is string && data.eventType.size() >= 2 && data.eventType.size() <= 64 &&
+        data.eventId is string && data.eventId.size() >= 1 && data.eventId.size() <= 128 &&
+        (!('senderId' in data) || (data.senderId is string && data.senderId.size() <= 128)) &&
+        (!('senderName' in data) || (data.senderName is string && data.senderName.size() <= 256)) &&
+        (!('senderEmail' in data) || (data.senderEmail is string && data.senderEmail.size() <= 256)) &&
+        (!('senderRole' in data) || (data.senderRole is string && data.senderRole.size() <= 256)) &&
+        (!('senderDevice' in data) || (data.senderDevice is string && data.senderDevice.size() <= 256)) &&
+        (!('serverInstanceId' in data) || (data.serverInstanceId is string && data.serverInstanceId.size() <= 128)) &&
+        data.version is number && data.version >= 0 &&
+        data.updatedAtIso is string && data.updatedAtIso.size() >= 10 && data.updatedAtIso.size() <= 64 &&
+        data.payloadJson is string && data.payloadJson.size() >= 1 && data.payloadJson.size() <= 900000;
+    }
+
+    // Pillar 2: Validation Blueprint for Direct Client WorkOrder
+    function isValidWorkOrder(data) {
+      return data.keys().hasAll([
+          'id',
+          'orderNumber',
+          'tableId',
+          'ownerId',
+          'status',
+          'contractorName',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'orderNumber',
+          'tableId',
+          'ownerId',
+          'status',
+          'contractorName',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.orderNumber is string && data.orderNumber.size() >= 1 && data.orderNumber.size() <= 128 &&
+        isValidId(data.tableId) &&
+        isValidId(data.ownerId) &&
+        data.ownerId == request.auth.uid &&
+        data.status is string && data.status.size() <= 32 &&
+        (data.status == 'open' || data.status == 'in_progress' || data.status == 'completed' || data.status == 'archived') &&
+        data.contractorName is string && data.contractorName.size() >= 1 && data.contractorName.size() <= 500 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // Pillar 2: Validation Blueprint for AdminRecord
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'createdAt']) &&
+        isValidId(data.uid) &&
+        data.createdAt is timestamp;
+    }
+
+    // Collection 1: /serverVaults/{vaultKey}
+    match /serverVaults/{vaultKey} {
+      allow get: if isValidServerVaultKey(vaultKey);
+      allow list: if false;
+      allow create: if isValidServerVaultKey(vaultKey) &&
+        isValidServerVaultManifest(incoming()) &&
+        incoming().vaultKey == vaultKey;
+      allow update: if isValidServerVaultManifest(incoming()) &&
+        isValidServerVaultKey(vaultKey) &&
+        incoming().vaultKey == existing().vaultKey &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'version',
+          'updatedAtIso',
+          'workOrderCount',
+          'tableCount',
+          'userCount',
+          'chunkCount',
+          'chunkIds',
+          'coreJson'
+        ]);
+      allow delete: if false;
+
+      // Subcollection: /serverVaults/{vaultKey}/chunks/{chunkId}
+      match /chunks/{chunkId} {
+        allow get: if isValidServerVaultKey(vaultKey) && isValidId(chunkId);
+        allow list: if false;
+        allow create: if isValidServerVaultKey(vaultKey) &&
+          isValidId(chunkId) &&
+          isValidServerVaultChunk(incoming()) &&
+          incoming().vaultKey == vaultKey &&
+          incoming().chunkId == chunkId;
+        allow update: if isValidServerVaultChunk(incoming()) &&
+          isValidServerVaultKey(vaultKey) &&
+          isValidId(chunkId) &&
+          incoming().vaultKey == existing().vaultKey &&
+          incoming().chunkId == existing().chunkId &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'chunkType',
+            'chunkIndex',
+            'version',
+            'updatedAtIso',
+            'payloadJson'
+          ]);
+        allow delete: if isValidServerVaultKey(vaultKey) && isValidId(chunkId);
+      }
+
+      // Subcollection: /serverVaults/{vaultKey}/live_pulse/{pulseId}
+      match /live_pulse/{pulseId} {
+        allow get, list: if isValidServerVaultKey(vaultKey) && (pulseId == 'sync' || isValidId(pulseId));
+        allow create, update: if isValidServerVaultKey(vaultKey) &&
+          (pulseId == 'sync' || isValidId(pulseId)) &&
+          isValidServerVaultLivePulse(incoming()) &&
+          incoming().vaultKey == vaultKey &&
+          incoming().pulseId == pulseId;
+        allow delete: if false;
+      }
+    }
+
+    // Collection 2: /workOrders/{orderId}
+    match /workOrders/{orderId} {
+      allow get: if isVerifiedUser() && isValidId(orderId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && existing().ownerId == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isValidWorkOrder(incoming()) &&
+        incoming().id == orderId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidWorkOrder(incoming()) &&
+        isVerifiedUser() &&
+        isValidId(orderId) &&
+        incoming().id == existing().id &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().status != 'archived' &&
+            existing().ownerId == request.auth.uid &&
+            (
+              // Action 1: Status progression
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) ||
+              // Action 2: Details update
+              incoming().diff(existing()).affectedKeys().hasOnly(['orderNumber', 'tableId', 'contractorName', 'status', 'updatedAt'])
+            )
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(orderId) && isAdmin();
+    }
+
+    // Collection 3: /admins/{adminId}
+    match /admins/{adminId} {
+      allow get: if isVerifiedUser() && isValidId(adminId) && (request.auth.uid == adminId || isBootstrappedAdmin());
+      allow list: if false;
+      allow create: if isBootstrappedAdmin() &&
+        isValidId(adminId) &&
+        isValidAdminRecord(incoming()) &&
+        incoming().uid == adminId &&
+        incoming().createdAt == request.time;
+      allow update: if isValidAdminRecord(incoming()) &&
+        isBootstrappedAdmin() &&
+        isValidId(adminId) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['uid']);
+      allow delete: if isBootstrappedAdmin() && isValidId(adminId);
+    }
+  }
+}

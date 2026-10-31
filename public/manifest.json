@@ -1,0 +1,41 @@
+{
+  "id": "/",
+  "name": "حوكمة جودة اعمال الانشاءات",
+  "short_name": "حوكمة جودة اعمال الانشاءات",
+  "description": "حوكمة جودة اعمال الانشاءات - منصة ذكية لتدقيق واعتماد أوامر العمل وإجراء 155 مع الإشعارات الفورية والمزامنة السحابية",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#064e3b",
+  "dir": "rtl",
+  "lang": "ar",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["business", "productivity", "utilities"],
+  "shortcuts": [
+    {
+      "name": "إضافة أمر عمل",
+      "url": "/?action=add",
+      "description": "إضافة أمر عمل جديد فورياً"
+    },
+    {
+      "name": "استيراد إكسل",
+      "url": "/?action=import",
+      "description": "استيراد أوامر العمل من ملف Excel"
+    }
+  ]
+}

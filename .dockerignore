@@ -1,0 +1,12 @@
+node_modules
+build
+coverage
+.git
+.aistudio
+*.log
+*.test.ts
+data/backups
+data/scheduled_cloud_backups
+data/db.json.tmp
+*.tmp
+
