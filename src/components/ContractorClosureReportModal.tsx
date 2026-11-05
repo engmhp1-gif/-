@@ -29,6 +29,8 @@ import { exportToPdf, captureElementToImage } from '../services/exportService';
 import { resolveOrderScope, ARABIC_MONTHS, getArabicMonthName } from '../utils/tableScope';
 import { soundService } from '../services/soundService';
 import { UnifiedSectionExportBar } from './UnifiedSectionExportBar';
+import { getEvaluatedSupportChecklistKeys } from './TechnicalSupportAuditModal';
+import { isOrderQualified100InAllThreeAudits, getEffectiveProcedure155Status } from '../utils/auditTracker';
 import ExcelJS from 'exceljs';
 
 interface ContractorClosureReportModalProps {
@@ -279,9 +281,14 @@ export const ContractorClosureReportModal: React.FC<ContractorClosureReportModal
   }, [workOrders, officeFilter, periodType, selectedYear, selectedMonthNum, selectedQuarter, selectedHalf, selectedWeekMode]);
 
   const isClosed155 = (order: WorkOrder): boolean => {
-    const s = String(order.procedure155Status || '');
-    if (s.includes('غير')) return false;
-    return s.includes('مؤهل') || s.includes('معتمد') || s.includes('تم');
+    const evalKeys = getEvaluatedSupportChecklistKeys(order);
+    const s = String(order.procedure155Status || '').trim();
+    const eff155 = getEffectiveProcedure155Status(order);
+    return (
+      isOrderQualified100InAllThreeAudits(order) ||
+      (!eff155.includes('غير') && (eff155.includes('مؤهل') || eff155.includes('تم'))) ||
+      (evalKeys.length > 0 && !s.includes('غير') && (s.includes('مؤهل') || s.includes('معتمد')))
+    );
   };
 
   // Compute Contractor Closure Comparison Statistics
@@ -524,7 +531,7 @@ export const ContractorClosureReportModal: React.FC<ContractorClosureReportModal
       const titleCell = sheet.getCell('A1');
       titleCell.value = `حوكمة جودة اعمال الانشاءات • ${periodMeta.typeLabel} لمقارنة إنجاز إغلاقات المقاولين (إجراء 155)`;
       titleCell.font = { name: 'Cairo', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF064E3B' } };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002855' } };
       titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
       sheet.getRow(1).height = 34;
 
@@ -532,8 +539,8 @@ export const ContractorClosureReportModal: React.FC<ContractorClosureReportModal
       sheet.mergeCells('A2:I2');
       const subCell = sheet.getCell('A2');
       subCell.value = `الفترة: ${periodMeta.periodTitle}  |  نطاق المكاتب: ${officeFilter === 'all' ? 'كافة المكاتب الفرعية' : officeFilter}  |  إجمالي الأوامر: ${summaryKpis.totalOrders}  |  المغلق المعتمد: ${summaryKpis.totalClosed} (${summaryKpis.overallClosureRate}%)`;
-      subCell.font = { name: 'Cairo', size: 11, bold: true, color: { argb: 'FF0F172A' } };
-      subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECFDF5' } };
+      subCell.font = { name: 'Cairo', size: 11, bold: true, color: { argb: 'FFFDB813' } };
+      subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF004B8D' } };
       subCell.alignment = { horizontal: 'center', vertical: 'middle' };
       sheet.getRow(2).height = 24;
 
@@ -554,13 +561,13 @@ export const ContractorClosureReportModal: React.FC<ContractorClosureReportModal
         const cell = headerRow.getCell(i + 1);
         cell.value = h;
         cell.font = { name: 'Cairo', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002855' } };
         cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         cell.border = {
-          top: { style: 'thin', color: { argb: 'FF334155' } },
-          bottom: { style: 'medium', color: { argb: 'FF10B981' } },
-          left: { style: 'thin', color: { argb: 'FF334155' } },
-          right: { style: 'thin', color: { argb: 'FF334155' } }
+          top: { style: 'thin', color: { argb: 'FF1E3A8A' } },
+          bottom: { style: 'medium', color: { argb: 'FFF58220' } },
+          left: { style: 'thin', color: { argb: 'FF1E3A8A' } },
+          right: { style: 'thin', color: { argb: 'FF1E3A8A' } }
         };
       });
       headerRow.height = 28;
@@ -637,7 +644,7 @@ export const ContractorClosureReportModal: React.FC<ContractorClosureReportModal
         const c = mHeaderRow.getCell(i + 1);
         c.value = h;
         c.font = { name: 'Cairo', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
-        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF064E3B' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002855' } };
         c.alignment = { horizontal: 'center', vertical: 'middle' };
       });
       mHeaderRow.height = 26;
@@ -686,10 +693,10 @@ export const ContractorClosureReportModal: React.FC<ContractorClosureReportModal
       className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto font-['Cairo',sans-serif]"
       dir="rtl"
     >
-      <div className="bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl w-full max-w-[1280px] max-h-[95vh] flex flex-col overflow-hidden text-right">
+      <div className="bg-slate-900 border-2 border-[#F58220]/70 rounded-3xl shadow-2xl w-full max-w-[1280px] max-h-[95vh] flex flex-col overflow-hidden text-right">
         
         {/* Top Modal Header & Period Selector Bar */}
-        <div className="p-4 sm:px-6 bg-slate-950 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div className="p-4 sm:px-6 bg-gradient-to-l from-[#002855] via-[#003B73] to-[#004B8D] border-b-2 border-[#F58220] flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-500 via-teal-600 to-indigo-800 flex items-center justify-center text-white shadow-lg border border-emerald-400/40 shrink-0">
               <Briefcase className="w-5 h-5 text-amber-300" />
@@ -1051,27 +1058,27 @@ export const ContractorClosureReportModal: React.FC<ContractorClosureReportModal
                   <div className="flex flex-col gap-3">
                     
                     {/* Official Header Strictly Conforming to User Requirements */}
-                    <div className="border-b-2 border-slate-900 pb-2.5 flex items-center justify-between gap-4">
+                    <div className="bg-[#002855] text-white border-b-3 border-[#F58220] px-4 py-2.5 rounded-t-xl flex items-center justify-between gap-4">
                       {/* Right: Platform Header with Graded Typography */}
                       <div className="text-right flex flex-col gap-0.5">
-                        <span className="text-sm sm:text-base font-black text-slate-950 leading-tight">
+                        <span className="text-sm sm:text-base font-black text-white leading-tight">
                           حوكمة جودة اعمال الانشاءات
                         </span>
-                        <span className="text-xs sm:text-[13px] font-bold text-slate-800 leading-tight">
+                        <span className="text-xs sm:text-[13px] font-bold text-[#FDB813] leading-tight">
                           منظومة ادارة كهرباء الحدود الشمالية
                         </span>
-                        <span className="text-[11px] font-semibold text-slate-600 leading-tight">
+                        <span className="text-[11px] font-semibold text-blue-200 leading-tight">
                           المساندة الفنية
                         </span>
                       </div>
 
                       <div className="text-center">
-                        <h2 className="text-xs sm:text-sm font-black text-slate-950">
+                        <h2 className="text-xs sm:text-sm font-black text-[#FDB813]">
                           إغلاقات المقاولين
                         </h2>
                       </div>
 
-                      <div className="text-left font-mono text-xs font-bold text-slate-800">
+                      <div className="text-left font-mono text-xs font-bold text-white">
                         التاريخ: {new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())}
                       </div>
                     </div>
@@ -1155,12 +1162,12 @@ export const ContractorClosureReportModal: React.FC<ContractorClosureReportModal
 
                     {/* Main Contractors Closure Comparison Table */}
                     <div className="border border-slate-300 rounded-xl overflow-hidden">
-                      <div className="bg-slate-900 text-white px-3.5 py-1.5 flex items-center justify-between text-xs font-black">
+                      <div className="bg-[#002855] text-white border-b-2 border-[#F58220] px-3.5 py-1.5 flex items-center justify-between text-xs font-black">
                         <div className="flex items-center gap-2">
-                          <BarChart3 className="w-4 h-4 text-emerald-400" />
+                          <BarChart3 className="w-4 h-4 text-[#FDB813]" />
                           <span>جدول ترتيب ومقارنة المقاولين في المكاتب حسب نسبة إنجاز الإغلاقات</span>
                         </div>
-                        <span className="text-[10px] text-amber-300 font-mono">
+                        <span className="text-[10px] text-[#FDB813] font-mono">
                           إجمالي المقاولين بالتقرير: {contractorStats.length} مقاول
                         </span>
                       </div>

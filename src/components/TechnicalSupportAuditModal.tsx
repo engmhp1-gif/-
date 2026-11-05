@@ -20,9 +20,26 @@ import {
   Pickaxe,
   Boxes,
   Zap,
-  Link2
+  Link2,
+  BookOpen,
+  Search,
+  Building2,
+  Cpu,
+  Anchor,
+  Cable,
+  PlugZap,
+  GitCommitHorizontal,
+  Shield,
+  RadioTower,
+  SlidersHorizontal,
+  Eye
 } from 'lucide-react';
-import { WorkOrder } from '../types';
+import { WorkOrder, WorkOrderAuditColumnData, AuditSectionCategoryData } from '../types';
+import {
+  AUDIT_CATEGORIES_META,
+  AuditCategoryKey,
+  calculateCategoryAuditStatus
+} from '../data/auditChecklistData';
 
 export type SupportChecklistValue = 'مكتمل' | 'غير مكتمل' | 'لا ينطبق';
 
@@ -41,8 +58,10 @@ export interface SupportChecklistItemMeta {
   key: SupportChecklistFieldKey;
   title: string;
   shortTitle: string;
+  abbrTitle: string;
   attachmentTitle: string;
   attachmentShortTitle: string;
+  attachmentAbbrTitle: string;
   description: string;
   iconName: 'meter' | 'excavation' | 'equipment' | 'overhead' | 'fileText' | 'fileCheck' | 'spreadsheet' | 'layers' | 'shield';
 }
@@ -51,36 +70,44 @@ export const TECHNICAL_SUPPORT_CHECKLIST_ITEMS: SupportChecklistItemMeta[] = [
   {
     key: 'meterPhotoDocumentation',
     title: 'توثيق صور العداد',
-    shortTitle: 'توثيق صور العداد',
+    shortTitle: 'صور العداد',
+    abbrTitle: 'عداد',
     attachmentTitle: 'ارفاق صور العداد',
-    attachmentShortTitle: 'ارفاق صور العداد',
+    attachmentShortTitle: 'صور العداد',
+    attachmentAbbrTitle: 'م.عداد',
     description: 'التحقق من اكتمال وتوثيق صور العداد والقاطع والتأريض وميزان الاستواء',
     iconName: 'meter'
   },
   {
     key: 'excavationPhotoDocumentation',
     title: 'توثيق صور الحفريات',
-    shortTitle: 'توثيق صور الحفريات',
+    shortTitle: 'صور الحفريات',
+    abbrTitle: 'حفر',
     attachmentTitle: 'ارفاق صور الحفريات',
-    attachmentShortTitle: 'ارفاق صور الحفريات',
+    attachmentShortTitle: 'صور الحفريات',
+    attachmentAbbrTitle: 'م.حفر',
     description: 'التحقق من اكتمال وتوثيق صور مسار الحفر وتمديد الكابلات والدمك والسفلتة',
     iconName: 'excavation'
   },
   {
     key: 'equipmentPhotoDocumentation',
     title: 'توثيق صور المعدات',
-    shortTitle: 'توثيق صور المعدات',
+    shortTitle: 'صور المعدات',
+    abbrTitle: 'معدات',
     attachmentTitle: 'ارفاق صور المعدات',
-    attachmentShortTitle: 'ارفاق صور المعدات',
+    attachmentShortTitle: 'صور المعدات',
+    attachmentAbbrTitle: 'م.معدات',
     description: 'التحقق من اكتمال وتوثيق صور القواعد وتركيب المعدات والنهايات والتأريض',
     iconName: 'equipment'
   },
   {
     key: 'overheadPhotoDocumentation',
     title: 'توثيق صور الهوائي',
-    shortTitle: 'توثيق صور الهوائي',
+    shortTitle: 'صور الهوائي',
+    abbrTitle: 'هوائي',
     attachmentTitle: 'ارفاق صور الهوائي',
-    attachmentShortTitle: 'ارفاق صور الهوائي',
+    attachmentShortTitle: 'صور الهوائي',
+    attachmentAbbrTitle: 'م.هوائي',
     description: 'التحقق من اكتمال وتوثيق صور الشبكات الهوائية والأعمدة والموصلات والشدادات',
     iconName: 'overhead'
   },
@@ -88,17 +115,21 @@ export const TECHNICAL_SUPPORT_CHECKLIST_ITEMS: SupportChecklistItemMeta[] = [
     key: 'consultantForms',
     title: 'نماذج الاستشاري',
     shortTitle: 'نماذج الاستشاري',
+    abbrTitle: 'استشاري',
     attachmentTitle: 'ارفاق نماذج الاستشاري',
-    attachmentShortTitle: 'ارفاق نماذج الاستشاري',
+    attachmentShortTitle: 'نماذج الاستشاري',
+    attachmentAbbrTitle: 'م.استشاري',
     description: 'استيفاء ومطابقة نماذج الاستشاري الهندسي المعتمدة',
     iconName: 'fileText'
   },
   {
     key: 'consultantClearanceForms',
     title: 'نماذج إجازة الاستشاري',
-    shortTitle: 'نماذج إجازة الاستشاري',
+    shortTitle: 'إجازة الاستشاري',
+    abbrTitle: 'إجازة',
     attachmentTitle: 'ارفاق نماذج إجازة الاستشاري',
-    attachmentShortTitle: 'ارفاق نماذج إجازة الاستشاري',
+    attachmentShortTitle: 'إجازة الاستشاري',
+    attachmentAbbrTitle: 'م.إجازة',
     description: 'اعتماد وإجازة الاستشاري لأعمال الموقع المنفذة',
     iconName: 'fileCheck'
   },
@@ -106,8 +137,10 @@ export const TECHNICAL_SUPPORT_CHECKLIST_ITEMS: SupportChecklistItemMeta[] = [
     key: 'form190',
     title: 'نموذج 190',
     shortTitle: 'نموذج 190',
+    abbrTitle: '190',
     attachmentTitle: 'ارفاق 190',
     attachmentShortTitle: 'ارفاق 190',
+    attachmentAbbrTitle: 'م.190',
     description: 'التدقيق والمطابقة الفنية لبيانات ومرفقات نموذج 190',
     iconName: 'spreadsheet'
   },
@@ -115,8 +148,10 @@ export const TECHNICAL_SUPPORT_CHECKLIST_ITEMS: SupportChecklistItemMeta[] = [
     key: 'form200',
     title: 'نموذج 200',
     shortTitle: 'نموذج 200',
+    abbrTitle: '200',
     attachmentTitle: 'ارفاق 200',
     attachmentShortTitle: 'ارفاق 200',
+    attachmentAbbrTitle: 'م.200',
     description: 'التدقيق والمطابقة الفنية لبيانات ومرفقات نموذج 200',
     iconName: 'layers'
   },
@@ -124,8 +159,10 @@ export const TECHNICAL_SUPPORT_CHECKLIST_ITEMS: SupportChecklistItemMeta[] = [
     key: 'inspectionForm',
     title: 'نموذج الفحص',
     shortTitle: 'نموذج الفحص',
+    abbrTitle: 'فحص',
     attachmentTitle: 'ارفاق الفحص',
     attachmentShortTitle: 'ارفاق الفحص',
+    attachmentAbbrTitle: 'م.فحص',
     description: 'استيفاء ومطابقة نموذج الفحص والاختبار الميداني النهائي',
     iconName: 'shield'
   }
@@ -137,13 +174,55 @@ export const SUPPORT_CHECKLIST_OPTIONS: SupportChecklistValue[] = [
   'لا ينطبق'
 ];
 
+export function renderAuditCategoryIcon(iconType: string, className = 'w-4 h-4 shrink-0') {
+  switch (iconType) {
+    case 'stationRoom':
+      return <Building2 className={className} />;
+    case 'hvSwitchgear':
+      return <Zap className={className} />;
+    case 'transformerSubstation':
+      return <Cpu className={className} />;
+    case 'lvPanel':
+      return <SlidersHorizontal className={className} />;
+    case 'subDistributionPanel':
+      return <Layers className={className} />;
+    case 'stationFoundations':
+      return <Boxes className={className} />;
+    case 'enclosures':
+      return <Shield className={className} />;
+    case 'protectionBollards':
+      return <ShieldCheck className={className} />;
+    case 'stationEarthing':
+      return <Anchor className={className} />;
+    case 'boxesAndMeters':
+      return <Gauge className={className} />;
+    case 'overheadPoles':
+      return <RadioTower className={className} />;
+    case 'conductors':
+      return <Cable className={className} />;
+    case 'stayWire':
+      return <GitCommitHorizontal className={className} />;
+    case 'riserCables':
+      return <PlugZap className={className} />;
+    case 'overheadEquipment':
+      return <Zap className={className} />;
+    case 'excavations':
+      return <Pickaxe className={className} />;
+    case 'joints':
+      return <GitCommitHorizontal className={className} />;
+    case 'terminations':
+    default:
+      return <PlugZap className={className} />;
+  }
+}
+
 export function normalizeSupportChecklistValue(raw: any): SupportChecklistValue {
   const s = String(raw || '').trim();
   if (!s) return 'غير مكتمل';
   if (s === 'لا ينطبق' || s === 'لاينطبق' || s.includes('لا ينطبق') || s.includes('لاينطبق')) {
     return 'لا ينطبق';
   }
-  if (s === 'مكتمل') {
+  if (s === 'مكتمل' || s === 'ممتثل') {
     return 'مكتمل';
   }
   return 'غير مكتمل';
@@ -152,6 +231,20 @@ export function normalizeSupportChecklistValue(raw: any): SupportChecklistValue 
 export function extractOrderSupportChecklistMap(
   order: WorkOrder
 ): Record<SupportChecklistFieldKey, SupportChecklistValue> {
+  const tsChecklist = (order.technicalSupportAudit as any)?.supportChecklist;
+  if (tsChecklist && typeof tsChecklist === 'object') {
+    return {
+      meterPhotoDocumentation: normalizeSupportChecklistValue(tsChecklist.meterPhotoDocumentation ?? order.meterPhotoDocumentation),
+      excavationPhotoDocumentation: normalizeSupportChecklistValue(tsChecklist.excavationPhotoDocumentation ?? order.excavationPhotoDocumentation),
+      equipmentPhotoDocumentation: normalizeSupportChecklistValue(tsChecklist.equipmentPhotoDocumentation ?? order.equipmentPhotoDocumentation),
+      overheadPhotoDocumentation: normalizeSupportChecklistValue(tsChecklist.overheadPhotoDocumentation ?? order.overheadPhotoDocumentation),
+      consultantForms: normalizeSupportChecklistValue(tsChecklist.consultantForms ?? order.consultantForms),
+      consultantClearanceForms: normalizeSupportChecklistValue(tsChecklist.consultantClearanceForms ?? order.consultantClearanceForms),
+      form190: normalizeSupportChecklistValue(tsChecklist.form190 ?? order.form190),
+      form200: normalizeSupportChecklistValue(tsChecklist.form200 ?? order.form200),
+      inspectionForm: normalizeSupportChecklistValue(tsChecklist.inspectionForm ?? order.inspectionForm)
+    };
+  }
   const fallbackPhotoVal = order.photoDocumentation === 'مكتمل' ? 'مكتمل' : 'غير مكتمل';
   return {
     meterPhotoDocumentation: normalizeSupportChecklistValue(order.meterPhotoDocumentation ?? fallbackPhotoVal),
@@ -170,13 +263,13 @@ export function getEvaluatedSupportChecklistKeys(
   order: WorkOrder,
   checklistMap?: Record<SupportChecklistFieldKey, SupportChecklistValue>
 ): SupportChecklistFieldKey[] {
-  const map = checklistMap || extractOrderSupportChecklistMap(order);
-  const explicitEvaluatedKeys = (order.technicalSupportAudit?.evaluatedKeys as SupportChecklistFieldKey[]) || [];
-  if (explicitEvaluatedKeys.length > 0) {
+  if (Array.isArray(order.technicalSupportAudit?.evaluatedKeys)) {
+    const explicitEvaluatedKeys = order.technicalSupportAudit.evaluatedKeys as SupportChecklistFieldKey[];
     return TECHNICAL_SUPPORT_CHECKLIST_ITEMS
       .map(i => i.key)
       .filter(k => explicitEvaluatedKeys.includes(k));
   }
+  const map = checklistMap || extractOrderSupportChecklistMap(order);
   const hasSupportAuditLog = Boolean(order.technicalSupportAudit?.lastUpdatedAt);
   if (hasSupportAuditLog) {
     return TECHNICAL_SUPPORT_CHECKLIST_ITEMS
@@ -189,14 +282,134 @@ export function getEvaluatedSupportChecklistKeys(
   return [];
 }
 
+/**
+ * Extracts the 9-item primary checklist map for PDC Audit, Construction Audit, or Technical Support Audit.
+ */
+export function extractColumnSupportChecklistMap(
+  order: WorkOrder,
+  columnField: 'pdcAudit' | 'constructionAudit' | 'procedure155Status' = 'procedure155Status'
+): Record<SupportChecklistFieldKey, SupportChecklistValue> {
+  if (columnField === 'procedure155Status') {
+    return extractOrderSupportChecklistMap(order);
+  }
+
+  const colData = order[columnField] as WorkOrderAuditColumnData | undefined;
+  if (colData && colData.supportChecklist && typeof colData.supportChecklist === 'object') {
+    const sc = colData.supportChecklist;
+    return {
+      meterPhotoDocumentation: normalizeSupportChecklistValue(sc.meterPhotoDocumentation),
+      excavationPhotoDocumentation: normalizeSupportChecklistValue(sc.excavationPhotoDocumentation),
+      equipmentPhotoDocumentation: normalizeSupportChecklistValue(sc.equipmentPhotoDocumentation),
+      overheadPhotoDocumentation: normalizeSupportChecklistValue(sc.overheadPhotoDocumentation),
+      consultantForms: normalizeSupportChecklistValue(sc.consultantForms),
+      consultantClearanceForms: normalizeSupportChecklistValue(sc.consultantClearanceForms),
+      form190: normalizeSupportChecklistValue(sc.form190),
+      form200: normalizeSupportChecklistValue(sc.form200),
+      inspectionForm: normalizeSupportChecklistValue(sc.inspectionForm)
+    };
+  }
+
+  // Fallback for legacy 18-category data if present
+  if (colData && typeof colData === 'object') {
+    const deriveFromCat = (catKey: AuditCategoryKey): SupportChecklistValue => {
+      const catMeta = AUDIT_CATEGORIES_META.find(c => c.key === catKey);
+      const calc = calculateCategoryAuditStatus(
+        colData[catKey] as AuditSectionCategoryData | undefined,
+        catMeta?.itemCount || 5
+      );
+      if (calc.status === 'ممتثل') return 'مكتمل';
+      if (calc.status === 'لا ينطبق') return 'لا ينطبق';
+      return 'غير مكتمل';
+    };
+
+    const hasAnyLegacyEvaluated = AUDIT_CATEGORIES_META.some(cat => {
+      const calc = calculateCategoryAuditStatus(
+        colData[cat.key] as AuditSectionCategoryData | undefined,
+        cat.itemCount
+      );
+      return calc.status !== 'قيد التدقيق';
+    });
+
+    if (hasAnyLegacyEvaluated) {
+      return {
+        meterPhotoDocumentation: deriveFromCat('boxesAndMeters'),
+        excavationPhotoDocumentation: deriveFromCat('excavations'),
+        equipmentPhotoDocumentation: deriveFromCat('stationRoom'),
+        overheadPhotoDocumentation: deriveFromCat('overheadPoles'),
+        consultantForms: deriveFromCat('joints'),
+        consultantClearanceForms: deriveFromCat('joints'),
+        form190: deriveFromCat('terminations'),
+        form200: deriveFromCat('terminations'),
+        inspectionForm: deriveFromCat('terminations')
+      };
+    }
+  }
+
+  return {
+    meterPhotoDocumentation: 'غير مكتمل',
+    excavationPhotoDocumentation: 'غير مكتمل',
+    equipmentPhotoDocumentation: 'غير مكتمل',
+    overheadPhotoDocumentation: 'غير مكتمل',
+    consultantForms: 'غير مكتمل',
+    consultantClearanceForms: 'غير مكتمل',
+    form190: 'غير مكتمل',
+    form200: 'غير مكتمل',
+    inspectionForm: 'غير مكتمل'
+  };
+}
+
+/**
+ * Returns the evaluated keys of the 9-item primary checklist for PDC Audit, Construction Audit, or Technical Support Audit.
+ */
+export function getEvaluatedColumnSupportChecklistKeys(
+  order: WorkOrder,
+  columnField: 'pdcAudit' | 'constructionAudit' | 'procedure155Status' = 'procedure155Status',
+  checklistMap?: Record<SupportChecklistFieldKey, SupportChecklistValue>
+): SupportChecklistFieldKey[] {
+  if (columnField === 'procedure155Status') {
+    return getEvaluatedSupportChecklistKeys(order, checklistMap);
+  }
+
+  const colData = order[columnField] as WorkOrderAuditColumnData | undefined;
+  if (!colData || typeof colData !== 'object') return [];
+
+  if (Array.isArray(colData.evaluatedKeys)) {
+    return TECHNICAL_SUPPORT_CHECKLIST_ITEMS
+      .map(i => i.key)
+      .filter(k => colData.evaluatedKeys!.includes(k));
+  }
+
+  // Fallback for legacy 18-category data if evaluatedKeys was not yet saved
+  const legacyEvaluated: SupportChecklistFieldKey[] = [];
+  const checkCat = (catKey: AuditCategoryKey, targetKey: SupportChecklistFieldKey) => {
+    const catMeta = AUDIT_CATEGORIES_META.find(c => c.key === catKey);
+    const calc = calculateCategoryAuditStatus(
+      colData[catKey] as AuditSectionCategoryData | undefined,
+      catMeta?.itemCount || 5
+    );
+    if (calc.status !== 'قيد التدقيق' && !legacyEvaluated.includes(targetKey)) {
+      legacyEvaluated.push(targetKey);
+    }
+  };
+
+  checkCat('boxesAndMeters', 'meterPhotoDocumentation');
+  checkCat('excavations', 'excavationPhotoDocumentation');
+  checkCat('stationRoom', 'equipmentPhotoDocumentation');
+  checkCat('overheadPoles', 'overheadPhotoDocumentation');
+  checkCat('joints', 'consultantForms');
+  checkCat('terminations', 'inspectionForm');
+
+  return legacyEvaluated;
+}
+
 export function calculateSupportChecklistStats(
   values: Record<SupportChecklistFieldKey, SupportChecklistValue>,
   evaluatedKeys?: string[]
 ) {
-  const activeItems =
-    evaluatedKeys && evaluatedKeys.length > 0
-      ? TECHNICAL_SUPPORT_CHECKLIST_ITEMS.filter(item => evaluatedKeys.includes(item.key))
-      : TECHNICAL_SUPPORT_CHECKLIST_ITEMS;
+  const hasExplicitEvaluated = Array.isArray(evaluatedKeys);
+  const activeItems = hasExplicitEvaluated
+    ? TECHNICAL_SUPPORT_CHECKLIST_ITEMS.filter(item => evaluatedKeys!.includes(item.key))
+    : TECHNICAL_SUPPORT_CHECKLIST_ITEMS;
 
   const entries = activeItems.map(item => values[item.key] || 'غير مكتمل');
   const completedCount = entries.filter(v => v === 'مكتمل').length;
@@ -209,15 +422,12 @@ export function calculateSupportChecklistStats(
       : naCount > 0
       ? 100
       : 0;
-  const isAllApplicableCompleted =
-    evaluatedKeys !== undefined
-      ? entries.length > 0 && incompleteCount === 0
-      : incompleteCount === 0 && entries.length > 0;
+  const isAllApplicableCompleted = entries.length > 0 && incompleteCount === 0;
 
   return {
     total: entries.length,
     totalAllItems: TECHNICAL_SUPPORT_CHECKLIST_ITEMS.length,
-    evaluatedCount: evaluatedKeys ? evaluatedKeys.length : entries.length,
+    evaluatedCount: hasExplicitEvaluated ? evaluatedKeys!.length : entries.length,
     completedCount,
     incompleteCount,
     naCount,
@@ -231,21 +441,23 @@ export function deriveSyncedAttachmentStatus(
   values: Record<SupportChecklistFieldKey, SupportChecklistValue>,
   evaluatedKeys?: string[]
 ): string {
+  const hasExplicitEval = Array.isArray(evaluatedKeys);
+  if (hasExplicitEval && evaluatedKeys!.length === 0) {
+    return '';
+  }
+  const isKeyEvaluated = (k: SupportChecklistFieldKey) =>
+    !hasExplicitEval || evaluatedKeys!.includes(k);
+
+  const readyItems = TECHNICAL_SUPPORT_CHECKLIST_ITEMS.filter(
+    (item) => isKeyEvaluated(item.key) && values[item.key] === 'مكتمل'
+  );
+
   const stats = calculateSupportChecklistStats(values, evaluatedKeys);
   if (stats.isAllApplicableCompleted && (stats.completedCount > 0 || stats.naCount > 0)) {
     return 'جاهز للارفاق الكامل';
   }
-  if (values.meterPhotoDocumentation === 'مكتمل') {
-    return 'جاهز لارفاق صور العداد';
-  }
-  if (values.excavationPhotoDocumentation === 'مكتمل') {
-    return 'جاهز لارفاق صور الخفريات';
-  }
-  if (values.equipmentPhotoDocumentation === 'مكتمل') {
-    return 'جاهز لارفاق صور المعدات';
-  }
-  if (values.overheadPhotoDocumentation === 'مكتمل') {
-    return 'جاهز لارفاق صور الهوائي';
+  if (readyItems.length > 0) {
+    return `جاهز لارفاق ( ${readyItems.map((i) => i.abbrTitle).join(' + ')} )`;
   }
   return 'غير جاهز للارفاق';
 }
@@ -264,6 +476,443 @@ export function deriveLegacyPhotoDocumentationStatus(
   return 'لا ينطبق';
 }
 
+/**
+ * نافذة "مراحل التدقيق" المنبثقة فوق بطاقة التدقيق للاطلاع فقط (ليست Check List):
+ * تعرض القوائم الأساسية الـ 18 في عمود جانبي، وعند الضغط على أي أيقونة منها تظهر البنود الخاصة بها
+ * في قائمة بجوار العمود بشكل مرتب ومنسق للاطلاع فقط.
+ */
+export type StageItemSemanticMark = 'ممتثل' | 'غير ممتثل' | 'لا ينطبق';
+
+export interface AuditStagesReferenceModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  order: WorkOrder;
+  columnTitle?: string;
+  initialCategoryKey?: AuditCategoryKey | null;
+}
+
+export const AuditStagesReferenceModal: React.FC<AuditStagesReferenceModalProps> = ({
+  isOpen,
+  onClose,
+  order,
+  columnTitle = 'تدقيق الإنشاءات والـ PDC',
+  initialCategoryKey = null
+}) => {
+  const [activeCategory, setActiveCategory] = useState<AuditCategoryKey>(
+    initialCategoryKey || AUDIT_CATEGORIES_META[0].key
+  );
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const storageKey = useMemo(
+    () => `p155_stages_semantic_marks_v1_${order.id || order.workOrderNumber}_${columnTitle}`,
+    [order.id, order.workOrderNumber, columnTitle]
+  );
+
+  const [semanticMarks, setSemanticMarks] = useState<Record<string, StageItemSemanticMark>>(() => {
+    try {
+      const saved = localStorage.getItem(`p155_stages_semantic_marks_v1_${order.id || order.workOrderNumber}_${columnTitle}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch {}
+    return {};
+  });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          setSemanticMarks(parsed);
+          return;
+        }
+      }
+    } catch {}
+    setSemanticMarks({});
+  }, [storageKey]);
+
+  const handleToggleItemMark = (catKey: AuditCategoryKey, itemIndex: number, mark: StageItemSemanticMark) => {
+    const key = `${catKey}:${itemIndex}`;
+    setSemanticMarks((prev) => {
+      const next = { ...prev };
+      if (next[key] === mark) {
+        delete next[key];
+      } else {
+        next[key] = mark;
+      }
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (initialCategoryKey) {
+      setActiveCategory(initialCategoryKey);
+    }
+  }, [initialCategoryKey]);
+
+  const currentCategoryMeta = useMemo(
+    () => AUDIT_CATEGORIES_META.find(c => c.key === activeCategory) || AUDIT_CATEGORIES_META[0],
+    [activeCategory]
+  );
+
+  const activeCategoryIndex = useMemo(
+    () => AUDIT_CATEGORIES_META.findIndex(c => c.key === activeCategory) + 1,
+    [activeCategory]
+  );
+
+  const totalItemsCount = useMemo(
+    () => AUDIT_CATEGORIES_META.reduce((sum, c) => sum + c.items.length, 0),
+    []
+  );
+
+  const currentCategoryStats = useMemo(() => {
+    let compliant = 0;
+    let nonCompliant = 0;
+    let na = 0;
+    const total = currentCategoryMeta.items.length;
+    for (let i = 1; i <= total; i++) {
+      const m = semanticMarks[`${currentCategoryMeta.key}:${i}`];
+      if (m === 'ممتثل') compliant++;
+      else if (m === 'غير ممتثل') nonCompliant++;
+      else if (m === 'لا ينطبق') na++;
+    }
+    const marked = compliant + nonCompliant + na;
+    return { compliant, nonCompliant, na, marked, remaining: total - marked, total };
+  }, [currentCategoryMeta, semanticMarks]);
+
+  const filteredItems = useMemo(() => {
+    return currentCategoryMeta.items
+      .map((text, idx) => ({ text, index: idx + 1 }))
+      .filter(({ text, index }) => {
+        if (!searchQuery.trim()) return true;
+        const q = searchQuery.trim().toLowerCase();
+        return text.toLowerCase().includes(q) || index.toString().includes(q);
+      });
+  }, [currentCategoryMeta, searchQuery]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[100020] flex items-center justify-center p-2 sm:p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClose();
+      }}
+    >
+      <div
+        className="relative w-full max-w-6xl bg-white rounded-2xl shadow-2xl border-2 border-[#003366] flex flex-col h-[88vh] max-h-[88vh] overflow-hidden text-right font-sans"
+        dir="rtl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Top Header */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 bg-gradient-to-l from-[#003366] via-[#0f2942] to-slate-900 text-white border-b-2 border-orange-500 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-orange-500/20 border border-orange-400/50 text-amber-300 shadow-xs">
+              <BookOpen className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10.5px] font-black bg-amber-400 text-slate-950 px-2.5 py-0.5 rounded-md shadow-2xs flex items-center gap-1">
+                  <Eye className="w-3 h-3" />
+                  <span>مراحل التدقيق • تلوين دلالي لمساعدة المدقق</span>
+                </span>
+                <h3 className="text-base sm:text-lg font-black text-white tracking-tight">
+                  القوائم الأساسية وبنود مراحل التدقيق ({columnTitle})
+                </h3>
+                <span className="text-xs font-mono font-bold bg-white/15 border border-white/25 text-amber-300 px-2.5 py-0.5 rounded-lg">
+                  {order.workOrderNumber}
+                </span>
+              </div>
+              <p className="text-xs text-slate-200 mt-1 font-bold">
+                {AUDIT_CATEGORIES_META.length} قائمة أساسية في العمود الجانبي • إجمالي {totalItemsCount} بند تفصيلي مزود بألوان دلالية (أخضر: ممتثل • أحمر: غير ممتثل • أصفر: لا ينطبق) لمنع نسيان أي بند
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <div className="relative w-48 sm:w-64">
+              <Search className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={`بحث في بنود (${currentCategoryMeta.title})...`}
+                className="w-full pr-8 pl-3 py-1.5 text-xs rounded-xl bg-white/10 hover:bg-white/15 focus:bg-white text-white focus:text-slate-900 placeholder:text-slate-300 focus:placeholder:text-slate-400 border border-white/25 focus:border-amber-400 focus:outline-none font-bold transition-colors"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black transition-all cursor-pointer shadow-xs"
+              title="إغلاق نافذة مراحل التدقيق"
+            >
+              <X className="w-4 h-4" />
+              <span>إغلاق</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Main Body: Right Sidebar Column (18 Main Lists) + Left Content Panel (Items with Semantic Color Buttons) */}
+        <div className="flex flex-col md:flex-row flex-1 overflow-hidden bg-slate-50">
+          {/* العمود الجانبي للقوائم الأساسية (18 قائمة) */}
+          <div className="w-full md:w-72 lg:w-80 shrink-0 border-b md:border-b-0 md:border-l border-slate-300 bg-gradient-to-b from-slate-100 via-slate-100 to-blue-50/40 flex flex-col max-h-[38vh] md:max-h-none overflow-hidden">
+            <div className="px-4 py-2.5 bg-slate-200/90 border-b border-slate-300 flex items-center justify-between shrink-0">
+              <span className="text-xs font-black text-[#003366] flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-orange-600" />
+                <span>القوائم الأساسية ({AUDIT_CATEGORIES_META.length})</span>
+              </span>
+              <span className="text-[10px] font-bold bg-[#003366] text-white px-2 py-0.5 rounded-md">
+                اختر القائمة
+              </span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+              {AUDIT_CATEGORIES_META.map((cat, idx) => {
+                const isSelected = activeCategory === cat.key;
+                let catMarkedCount = 0;
+                for (let i = 1; i <= cat.items.length; i++) {
+                  if (semanticMarks[`${cat.key}:${i}`]) catMarkedCount++;
+                }
+                const isCatAllMarked = catMarkedCount === cat.items.length && cat.items.length > 0;
+                return (
+                  <button
+                    key={cat.key}
+                    type="button"
+                    onClick={() => {
+                      setActiveCategory(cat.key);
+                      setSearchQuery('');
+                    }}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border text-right transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#003366] text-white border-[#003366] shadow-md ring-2 ring-orange-500/80'
+                        : isCatAllMarked
+                        ? 'bg-emerald-50 hover:bg-emerald-100/80 text-slate-900 border-emerald-400'
+                        : 'bg-white hover:bg-blue-50/80 text-slate-900 border-slate-300 hover:border-blue-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span
+                        className={`w-6 h-6 rounded-lg font-mono text-[11px] font-black flex items-center justify-center shrink-0 ${
+                          isSelected
+                            ? 'bg-orange-500 text-white'
+                            : isCatAllMarked
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-200 text-slate-800'
+                        }`}
+                      >
+                        {idx + 1}
+                      </span>
+                      <div
+                        className={`p-1.5 rounded-lg shrink-0 ${
+                          isSelected
+                            ? 'bg-white/15 text-amber-300'
+                            : 'bg-blue-50 text-[#003366]'
+                        }`}
+                      >
+                        {renderAuditCategoryIcon(cat.icon, 'w-4 h-4')}
+                      </div>
+                      <span
+                        className={`text-xs font-black truncate ${
+                          isSelected ? 'text-white' : 'text-slate-900'
+                        }`}
+                      >
+                        {cat.title}
+                      </span>
+                    </div>
+
+                    <span
+                      className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-black shrink-0 ${
+                        isSelected
+                          ? 'bg-white/20 text-amber-200 border border-white/20'
+                          : catMarkedCount > 0
+                          ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                          : 'bg-slate-100 text-slate-700 border border-slate-200'
+                      }`}
+                    >
+                      {catMarkedCount > 0 ? `${catMarkedCount}/${cat.items.length}` : `${cat.items.length} بند`}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* القائمة الجانبية المقابلة لعرض البنود التفصيلية مع الأيقونات الدلالية الثلاث */}
+          <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-b from-white via-slate-50/60 to-blue-50/20">
+            {/* Selected Category Banner */}
+            <div className="px-5 py-3 bg-gradient-to-l from-blue-50/90 via-indigo-50/60 to-slate-100 border-b border-slate-300 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#003366] text-amber-300 flex items-center justify-center shadow-xs shrink-0">
+                  {renderAuditCategoryIcon(currentCategoryMeta.icon, 'w-5 h-5')}
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-mono font-black px-2 py-0.5 rounded bg-orange-500 text-white">
+                      القائمة #{activeCategoryIndex} من {AUDIT_CATEGORIES_META.length}
+                    </span>
+                    <h4 className="text-sm sm:text-base font-black text-[#003366]">
+                      بنود مرحلة: {currentCategoryMeta.title}
+                    </h4>
+                  </div>
+                  <p className="text-xs text-slate-700 font-bold mt-0.5">
+                    {currentCategoryMeta.description}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-black">
+                <span className="px-2.5 py-1 rounded-xl bg-emerald-600 text-white shadow-2xs">
+                  ممتثل: {currentCategoryStats.compliant}
+                </span>
+                <span className="px-2.5 py-1 rounded-xl bg-rose-600 text-white shadow-2xs">
+                  غير ممتثل: {currentCategoryStats.nonCompliant}
+                </span>
+                <span className="px-2.5 py-1 rounded-xl bg-amber-400 text-slate-950 border border-amber-500 shadow-2xs">
+                  لا ينطبق: {currentCategoryStats.na}
+                </span>
+                <span className="px-2.5 py-1 rounded-xl bg-slate-200 text-slate-900 border border-slate-300">
+                  متبقي بدون تأشير: {currentCategoryStats.remaining}
+                </span>
+              </div>
+            </div>
+
+            {/* Ordered & Formatted Items List with 3 Semantic Color Icons per Item */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-2.5">
+              {filteredItems.length === 0 ? (
+                <div className="p-8 text-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-slate-600 font-bold text-xs">
+                  لا توجد بنود مطابقة لنص البحث "{searchQuery}" في قائمة ({currentCategoryMeta.title})
+                </div>
+              ) : (
+                filteredItems.map(({ text, index }) => {
+                  const currentMark = semanticMarks[`${currentCategoryMeta.key}:${index}`];
+                  const isCompliant = currentMark === 'ممتثل';
+                  const isNonCompliant = currentMark === 'غير ممتثل';
+                  const isNA = currentMark === 'لا ينطبق';
+
+                  const rowColorClasses = isCompliant
+                    ? 'bg-emerald-600 border-emerald-700 text-white shadow-md ring-2 ring-emerald-400/50'
+                    : isNonCompliant
+                    ? 'bg-rose-600 border-rose-700 text-white shadow-md ring-2 ring-rose-400/50'
+                    : isNA
+                    ? 'bg-amber-400 border-amber-500 text-slate-950 shadow-md ring-2 ring-amber-300/60'
+                    : 'bg-white hover:bg-blue-50/40 border-slate-200 hover:border-blue-300 text-slate-900 shadow-2xs';
+
+                  const indexBadgeClasses = isCompliant
+                    ? 'bg-white text-emerald-800'
+                    : isNonCompliant
+                    ? 'bg-white text-rose-800'
+                    : isNA
+                    ? 'bg-slate-900 text-amber-300'
+                    : 'bg-[#003366] text-amber-300';
+
+                  const textClasses = isCompliant || isNonCompliant
+                    ? 'text-white'
+                    : isNA
+                    ? 'text-slate-950'
+                    : 'text-slate-900';
+
+                  return (
+                    <div
+                      key={index}
+                      className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl border-2 transition-all duration-150 ${rowColorClasses}`}
+                    >
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <span
+                          className={`w-7 h-7 rounded-lg font-mono text-xs font-black flex items-center justify-center shrink-0 mt-0.5 shadow-2xs ${indexBadgeClasses}`}
+                        >
+                          {index}
+                        </span>
+                        <p className={`text-xs sm:text-sm font-black leading-relaxed select-text ${textClasses}`}>
+                          {text}
+                        </p>
+                      </div>
+
+                      {/* 3 Semantic Status Icons: ممتثل (أخضر) • غير ممتثل (أحمر) • لا ينطبق (أصفر) */}
+                      <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleItemMark(currentCategoryMeta.key, index, 'ممتثل')}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all cursor-pointer active:scale-95 ${
+                            isCompliant
+                              ? 'bg-white text-emerald-800 border-white ring-2 ring-white/60 shadow-xs'
+                              : isNonCompliant || isNA
+                              ? 'bg-black/20 hover:bg-emerald-600 text-white border-white/30'
+                              : 'bg-emerald-50 hover:bg-emerald-600 text-emerald-900 hover:text-white border-emerald-300'
+                          }`}
+                          title="ممتثل — تلوين البند كاملاً باللون الأخضر"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                          <span>ممتثل</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleToggleItemMark(currentCategoryMeta.key, index, 'غير ممتثل')}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all cursor-pointer active:scale-95 ${
+                            isNonCompliant
+                              ? 'bg-white text-rose-800 border-white ring-2 ring-white/60 shadow-xs'
+                              : isCompliant || isNA
+                              ? 'bg-black/20 hover:bg-rose-600 text-white border-white/30'
+                              : 'bg-rose-50 hover:bg-rose-600 text-rose-900 hover:text-white border-rose-300'
+                          }`}
+                          title="غير ممتثل — تلوين البند كاملاً باللون الأحمر"
+                        >
+                          <XCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span>غير ممتثل</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleToggleItemMark(currentCategoryMeta.key, index, 'لا ينطبق')}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black border transition-all cursor-pointer active:scale-95 ${
+                            isNA
+                              ? 'bg-slate-900 text-amber-300 border-slate-950 ring-2 ring-slate-900/40 shadow-xs'
+                              : isCompliant || isNonCompliant
+                              ? 'bg-black/20 hover:bg-amber-400 text-white hover:text-slate-950 border-white/30'
+                              : 'bg-amber-50 hover:bg-amber-400 text-amber-950 border-amber-300'
+                          }`}
+                          title="لا ينطبق — تلوين البند كاملاً باللون الأصفر"
+                        >
+                          <MinusCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span>لا ينطبق</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Modal Footer */}
+        <div className="px-5 py-3 bg-slate-100 border-t border-slate-300 flex flex-wrap items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+            <BookOpen className="w-4 h-4 text-[#003366]" />
+            <span>
+              دليل مراحل التدقيق ({AUDIT_CATEGORIES_META.length} قائمة • {totalItemsCount} بند) — الألوان الدلالية (أخضر: ممتثل، أحمر: غير ممتثل، أصفر: لا ينطبق) لمساعدة المدقق على التدقيق الصحيح وعدم نسيان أي بند
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-1.5 rounded-xl bg-[#003366] hover:bg-[#002244] text-white text-xs font-black transition-colors cursor-pointer shadow-xs"
+          >
+            إغلاق نافذة مراحل التدقيق
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export interface TechnicalSupportAuditPayload {
   meterPhotoDocumentation: SupportChecklistValue;
   excavationPhotoDocumentation: SupportChecklistValue;
@@ -278,6 +927,8 @@ export interface TechnicalSupportAuditPayload {
   attachmentStatus: string;
   procedure155Status: string;
   evaluatedKeys?: string[];
+  supportChecklist?: Record<string, any>;
+  itemUpdatedAt?: Record<string, string>;
 }
 
 interface TechnicalSupportAuditModalProps {
@@ -310,6 +961,10 @@ export const TechnicalSupportAuditModal: React.FC<TechnicalSupportAuditModalProp
     return getEvaluatedSupportChecklistKeys(order);
   });
 
+  const [itemUpdatedAt, setItemUpdatedAt] = useState<Record<string, string>>(() => {
+    return { ...((order.technicalSupportAudit as any)?.itemUpdatedAt || {}) };
+  });
+
   const [mainStatus, setMainStatus] = useState<string>(() => {
     const initialMap = extractOrderSupportChecklistMap(order);
     const initialEvalKeys = getEvaluatedSupportChecklistKeys(order, initialMap);
@@ -317,45 +972,85 @@ export const TechnicalSupportAuditModal: React.FC<TechnicalSupportAuditModalProp
       const initialStats = calculateSupportChecklistStats(initialMap, initialEvalKeys);
       return initialStats.isAllApplicableCompleted ? 'مؤهل للاغلاق ( معتمد )' : 'غير مؤهل للأغلاق';
     }
-    const raw = String(order.procedure155Status || '');
-    if (raw.includes('غير')) return 'غير مؤهل للأغلاق';
-    if (raw.includes('مؤهل') || raw.includes('معتمد')) return 'مؤهل للاغلاق ( معتمد )';
-    return 'غير مؤهل للأغلاق';
+    return '';
   });
 
   const [highlightedKey, setHighlightedKey] = useState<SupportChecklistFieldKey | null>(initialFocusField);
   const [isSaving, setIsSaving] = useState(false);
+  const [isStagesModalOpen, setIsStagesModalOpen] = useState(false);
+  const sessionKeyRef = React.useRef<string | null>(null);
+  const localValuesRef = React.useRef(checklistValues);
+  const localEvalRef = React.useRef(evaluatedKeys);
+  const localTimesRef = React.useRef(itemUpdatedAt);
+  localValuesRef.current = checklistValues;
+  localEvalRef.current = evaluatedKeys;
+  localTimesRef.current = itemUpdatedAt;
 
   useEffect(() => {
+    const currentSessionKey = `${order.id}:${viewMode}`;
     const nextMap = extractOrderSupportChecklistMap(order);
     const nextEvalKeys = getEvaluatedSupportChecklistKeys(order, nextMap);
-    setChecklistValues(nextMap);
-    setEvaluatedKeys(nextEvalKeys);
-    if (nextEvalKeys.length > 0) {
-      const nextStats = calculateSupportChecklistStats(nextMap, nextEvalKeys);
-      setMainStatus(nextStats.isAllApplicableCompleted ? 'مؤهل للاغلاق ( معتمد )' : 'غير مؤهل للأغلاق');
-    } else {
-      const raw = String(order.procedure155Status || '');
-      if (raw.includes('غير')) {
-        setMainStatus('غير مؤهل للأغلاق');
-      } else if (raw.includes('مؤهل') || raw.includes('معتمد')) {
-        setMainStatus('مؤهل للاغلاق ( معتمد )');
+    const incTimes: Record<string, string> = (order.technicalSupportAudit as any)?.itemUpdatedAt || {};
+
+    if (sessionKeyRef.current !== currentSessionKey) {
+      sessionKeyRef.current = currentSessionKey;
+      setChecklistValues(nextMap);
+      setEvaluatedKeys(nextEvalKeys);
+      setItemUpdatedAt(incTimes);
+      if (nextEvalKeys.length > 0) {
+        const nextStats = calculateSupportChecklistStats(nextMap, nextEvalKeys);
+        setMainStatus(nextStats.isAllApplicableCompleted ? 'مؤهل للاغلاق ( معتمد )' : 'غير مؤهل للأغلاق');
       } else {
-        setMainStatus('غير مؤهل للأغلاق');
+        setMainStatus('');
+      }
+      return;
+    }
+
+    // Smart concurrent merge per item so rapid local clicks are never reverted by in-flight prop echoes
+    let anyRemoteNewer = false;
+    const mergedValues = { ...localValuesRef.current };
+    const mergedEvalSet = new Set<string>(localEvalRef.current);
+    const mergedTimes = { ...localTimesRef.current };
+
+    for (const item of TECHNICAL_SUPPORT_CHECKLIST_ITEMS) {
+      const k = item.key;
+      const prevT = mergedTimes[k] ? new Date(mergedTimes[k]).getTime() : 0;
+      const incT = incTimes[k] ? new Date(incTimes[k]).getTime() : 0;
+      if (incT > prevT) {
+        anyRemoteNewer = true;
+        mergedValues[k] = nextMap[k];
+        mergedTimes[k] = incTimes[k];
+        if (nextEvalKeys.includes(k)) mergedEvalSet.add(k);
+        else mergedEvalSet.delete(k);
       }
     }
-  }, [order]);
+
+    if (anyRemoteNewer) {
+      const nextEvalArr = TECHNICAL_SUPPORT_CHECKLIST_ITEMS
+        .map(i => i.key)
+        .filter(k => mergedEvalSet.has(k));
+      setChecklistValues(mergedValues);
+      setEvaluatedKeys(nextEvalArr);
+      setItemUpdatedAt(mergedTimes);
+      if (nextEvalArr.length > 0) {
+        const nextStats = calculateSupportChecklistStats(mergedValues, nextEvalArr);
+        setMainStatus(nextStats.isAllApplicableCompleted ? 'مؤهل للاغلاق ( معتمد )' : 'غير مؤهل للأغلاق');
+      } else {
+        setMainStatus('');
+      }
+    }
+  }, [order, viewMode]);
 
   useEffect(() => {
     setHighlightedKey(initialFocusField || null);
   }, [initialFocusField]);
 
   const stats = useMemo(
-    () => calculateSupportChecklistStats(checklistValues, evaluatedKeys.length > 0 ? evaluatedKeys : undefined),
+    () => calculateSupportChecklistStats(checklistValues, evaluatedKeys),
     [checklistValues, evaluatedKeys]
   );
   const syncedAttachmentStatus = useMemo(
-    () => deriveSyncedAttachmentStatus(checklistValues, evaluatedKeys.length > 0 ? evaluatedKeys : undefined),
+    () => deriveSyncedAttachmentStatus(checklistValues, evaluatedKeys),
     [checklistValues, evaluatedKeys]
   );
 
@@ -385,43 +1080,47 @@ export const TechnicalSupportAuditModal: React.FC<TechnicalSupportAuditModalProp
     }
   };
 
-  const triggerSync = async (
+  const triggerSync = (
     nextValues: Record<SupportChecklistFieldKey, SupportChecklistValue>,
     nextMainStatus: string,
     currentEvaluatedKeys: string[],
+    nextItemTimes: Record<string, string> = itemUpdatedAt,
     shouldClose = false
   ) => {
     if (!effectiveCanEdit) return;
-    setIsSaving(true);
-    try {
-      await onSave(
-        {
-          meterPhotoDocumentation: nextValues.meterPhotoDocumentation,
-          excavationPhotoDocumentation: nextValues.excavationPhotoDocumentation,
-          equipmentPhotoDocumentation: nextValues.equipmentPhotoDocumentation,
-          overheadPhotoDocumentation: nextValues.overheadPhotoDocumentation,
-          photoDocumentation: deriveLegacyPhotoDocumentationStatus(nextValues),
-          consultantForms: nextValues.consultantForms,
-          consultantClearanceForms: nextValues.consultantClearanceForms,
-          form190: nextValues.form190,
-          form200: nextValues.form200,
-          inspectionForm: nextValues.inspectionForm,
-          attachmentStatus: deriveSyncedAttachmentStatus(
-            nextValues,
-            currentEvaluatedKeys.length > 0 ? currentEvaluatedKeys : undefined
-          ),
-          procedure155Status: nextMainStatus,
-          evaluatedKeys: currentEvaluatedKeys
-        },
-        shouldClose
-      );
-    } finally {
-      setIsSaving(false);
+    const isEmptyEval = currentEvaluatedKeys.length === 0;
+    const payload: TechnicalSupportAuditPayload = {
+      meterPhotoDocumentation: isEmptyEval ? ('' as any) : nextValues.meterPhotoDocumentation,
+      excavationPhotoDocumentation: isEmptyEval ? ('' as any) : nextValues.excavationPhotoDocumentation,
+      equipmentPhotoDocumentation: isEmptyEval ? ('' as any) : nextValues.equipmentPhotoDocumentation,
+      overheadPhotoDocumentation: isEmptyEval ? ('' as any) : nextValues.overheadPhotoDocumentation,
+      photoDocumentation: isEmptyEval ? ('' as any) : deriveLegacyPhotoDocumentationStatus(nextValues),
+      consultantForms: isEmptyEval ? ('' as any) : nextValues.consultantForms,
+      consultantClearanceForms: isEmptyEval ? ('' as any) : nextValues.consultantClearanceForms,
+      form190: isEmptyEval ? ('' as any) : nextValues.form190,
+      form200: isEmptyEval ? ('' as any) : nextValues.form200,
+      inspectionForm: isEmptyEval ? ('' as any) : nextValues.inspectionForm,
+      attachmentStatus: deriveSyncedAttachmentStatus(nextValues, currentEvaluatedKeys),
+      procedure155Status: nextMainStatus,
+      evaluatedKeys: currentEvaluatedKeys,
+      supportChecklist: isEmptyEval ? {} : nextValues,
+      itemUpdatedAt: nextItemTimes
+    };
+
+    if (shouldClose) {
+      setIsSaving(true);
+      Promise.resolve(onSave(payload, true)).finally(() => {
+        setIsSaving(false);
+      });
+    } else {
+      // Non-blocking instant sync for in-modal clicks (<1ms UI response)
+      Promise.resolve(onSave(payload, false)).catch(() => {});
     }
   };
 
-  const handleSelectOption = async (key: SupportChecklistFieldKey, val: SupportChecklistValue) => {
+  const handleSelectOption = (key: SupportChecklistFieldKey, val: SupportChecklistValue) => {
     if (!effectiveCanEdit) return;
+    const nowIso = new Date().toISOString();
     const isAlreadyEvaluatedWithSameVal = evaluatedKeys.includes(key) && checklistValues[key] === val;
 
     let nextValues: Record<SupportChecklistFieldKey, SupportChecklistValue>;
@@ -438,33 +1137,40 @@ export const TechnicalSupportAuditModal: React.FC<TechnicalSupportAuditModalProp
         ...checklistValues,
         [key]: val
       };
-      nextEvaluatedKeys = Array.from(new Set([...evaluatedKeys, key]));
+      nextEvaluatedKeys = TECHNICAL_SUPPORT_CHECKLIST_ITEMS
+        .map(i => i.key)
+        .filter(k => k === key || evaluatedKeys.includes(k));
     }
 
-    setEvaluatedKeys(nextEvaluatedKeys);
+    const nextItemTimes = {
+      ...itemUpdatedAt,
+      [key]: nowIso
+    };
 
-    const nextStats = calculateSupportChecklistStats(
-      nextValues,
-      nextEvaluatedKeys.length > 0 ? nextEvaluatedKeys : undefined
-    );
+    const nextStats = calculateSupportChecklistStats(nextValues, nextEvaluatedKeys);
     const autoMainStatus =
-      nextEvaluatedKeys.length > 0 && nextStats.isAllApplicableCompleted
+      nextEvaluatedKeys.length === 0
+        ? ''
+        : nextStats.isAllApplicableCompleted
         ? 'مؤهل للاغلاق ( معتمد )'
         : 'غير مؤهل للأغلاق';
 
+    setEvaluatedKeys(nextEvaluatedKeys);
+    setItemUpdatedAt(nextItemTimes);
     setChecklistValues(nextValues);
     setMainStatus(autoMainStatus);
-    await triggerSync(nextValues, autoMainStatus, nextEvaluatedKeys, false);
+    triggerSync(nextValues, autoMainStatus, nextEvaluatedKeys, nextItemTimes, false);
   };
 
-  const handleMainStatusToggle = async (newStatus: string) => {
+  const handleMainStatusToggle = (newStatus: string) => {
     if (!effectiveCanEdit) return;
     setMainStatus(newStatus);
-    await triggerSync(checklistValues, newStatus, evaluatedKeys, false);
+    triggerSync(checklistValues, newStatus, evaluatedKeys, itemUpdatedAt, false);
   };
 
-  const handleBulkSetAll = async (val: SupportChecklistValue) => {
+  const handleBulkSetAll = (val: SupportChecklistValue) => {
     if (!effectiveCanEdit) return;
+    const nowIso = new Date().toISOString();
     const nextValues: Record<SupportChecklistFieldKey, SupportChecklistValue> = {
       meterPhotoDocumentation: val,
       excavationPhotoDocumentation: val,
@@ -477,16 +1183,22 @@ export const TechnicalSupportAuditModal: React.FC<TechnicalSupportAuditModalProp
       inspectionForm: val
     };
     const allKeys = TECHNICAL_SUPPORT_CHECKLIST_ITEMS.map(i => i.key);
-    setEvaluatedKeys(allKeys);
+    const nextItemTimes: Record<string, string> = { ...itemUpdatedAt };
+    for (const k of allKeys) {
+      nextItemTimes[k] = nowIso;
+    }
 
     const autoMainStatus = val === 'غير مكتمل' ? 'غير مؤهل للأغلاق' : 'مؤهل للاغلاق ( معتمد )';
+    setEvaluatedKeys(allKeys);
+    setItemUpdatedAt(nextItemTimes);
     setChecklistValues(nextValues);
     setMainStatus(autoMainStatus);
-    await triggerSync(nextValues, autoMainStatus, allKeys, false);
+    triggerSync(nextValues, autoMainStatus, allKeys, nextItemTimes, false);
   };
 
-  const handleResetAllInternal = async () => {
+  const handleResetAllInternal = () => {
     if (!effectiveCanEdit) return;
+    const nowIso = new Date().toISOString();
     const nextValues: Record<SupportChecklistFieldKey, SupportChecklistValue> = {
       meterPhotoDocumentation: 'غير مكتمل',
       excavationPhotoDocumentation: 'غير مكتمل',
@@ -498,13 +1210,20 @@ export const TechnicalSupportAuditModal: React.FC<TechnicalSupportAuditModalProp
       form200: 'غير مكتمل',
       inspectionForm: 'غير مكتمل'
     };
+    const nextItemTimes: Record<string, string> = { ...itemUpdatedAt };
+    for (const item of TECHNICAL_SUPPORT_CHECKLIST_ITEMS) {
+      nextItemTimes[item.key] = nowIso;
+    }
+
     setEvaluatedKeys([]);
+    setItemUpdatedAt(nextItemTimes);
     setChecklistValues(nextValues);
-    setMainStatus('غير مؤهل للأغلاق');
-    await triggerSync(nextValues, 'غير مؤهل للأغلاق', [], false);
+    setMainStatus('');
+    triggerSync(nextValues, '', [], nextItemTimes, false);
   };
 
-  const isMainQualified = !mainStatus.includes('غير') && (mainStatus.includes('مؤهل') || mainStatus.includes('معتمد'));
+  const isPendingAudit = evaluatedKeys.length === 0 && (!mainStatus || mainStatus === 'قيد التدقيق');
+  const isMainQualified = !isPendingAudit && !mainStatus.includes('غير') && (mainStatus.includes('مؤهل') || mainStatus.includes('معتمد'));
 
   return (
     <div
@@ -512,39 +1231,53 @@ export const TechnicalSupportAuditModal: React.FC<TechnicalSupportAuditModalProp
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-5xl bg-gradient-to-br from-[#f8fafc] via-[#f1f5f9] to-[#eef2ff] rounded-2xl shadow-2xl border-2 border-slate-300 flex flex-col max-h-[92vh] overflow-hidden text-right font-sans"
+        className="relative w-full max-w-5xl bg-gradient-to-br from-[#f8fafc] via-[#f1f5f9] to-[#eef2ff] rounded-2xl shadow-2xl border-2 border-[#002855] flex flex-col max-h-[92vh] overflow-hidden text-right font-sans"
         dir="rtl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Executive Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-300 bg-gradient-to-l from-slate-100 via-blue-50/80 to-indigo-50/80 text-slate-900 shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-b-2 border-[#F58220] bg-gradient-to-l from-[#001D40] via-[#002855] to-[#004B8D] text-white shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 border border-blue-200 text-blue-800 shadow-2xs">
+            <div className="p-2.5 rounded-xl bg-[#7F1D1D] border border-red-400/50 text-white shadow-xs">
               <Award className="w-5 h-5" />
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider bg-indigo-100/90 text-indigo-950 border border-indigo-200 px-2 py-0.5 rounded-md shadow-2xs">
+                <span className="text-[10px] font-black uppercase tracking-wider bg-[#7F1D1D] border border-red-300/40 text-white px-2.5 py-0.5 rounded-md shadow-2xs">
                   {isAttachmentReadOnly
                     ? 'استعراض متزامن • مرتبطة بتدقيق المساندة الفنية'
-                    : 'CHECK LIST • المساندة الفنية + مزامنة الإرفاق التلقائية'}
+                    : 'CHECK LIST • 11. تدقيق المساندة الفنية + مزامنة الإرفاق'}
                 </span>
-                <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
+                <h3 className="text-base sm:text-lg font-black text-white tracking-tight">
                   {isAttachmentReadOnly
                     ? 'بطاقة حالة الإرفاق المتزامنة تلقائياً مع تدقيق المساندة الفنية'
                     : 'بطاقة نتائج تدقيق المساندة الفنية وحالة الإرفاق المتزامنة'}
                 </h3>
-                <span className="text-xs font-mono font-bold bg-amber-100/90 border border-amber-300 text-amber-950 px-2.5 py-0.5 rounded-lg shadow-2xs">
+                <span className="text-xs font-mono font-bold bg-white/15 border border-white/25 text-[#FDB813] px-2.5 py-0.5 rounded-lg shadow-2xs">
                   {order.workOrderNumber}
                 </span>
               </div>
-              <p className="text-xs text-slate-700 mt-1 font-bold">
+              <p className="text-xs text-blue-100 mt-1 font-bold">
                 {order.office} • المقاول: {order.contractor} {order.consultant ? `• الاستشاري: ${order.consultant}` : ''} {order.workOrderCode ? `• نوع الأمر: ${order.workOrderCode}` : ''}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* أيقونة مراحل التدقيق في الركن العلوي للاطلاع فقط */}
+            <button
+              type="button"
+              onClick={() => setIsStagesModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#003366] hover:bg-[#002244] text-white border-b-2 border-orange-500 text-xs font-black shadow-xs transition-all cursor-pointer active:scale-95"
+              title="فتح نافذة مراحل التدقيق (القوائم الأساسية الـ 18 وبنودها للاطلاع فقط)"
+            >
+              <BookOpen className="w-4 h-4 text-amber-300 shrink-0" />
+              <span>مراحل التدقيق</span>
+              <span className="text-[10px] bg-orange-500 text-white px-1.5 py-0.2 rounded font-bold">
+                للاطلاع
+              </span>
+            </button>
+
             {isAttachmentReadOnly ? (
               <div className="px-3 py-1.5 rounded-xl bg-emerald-100/90 border border-emerald-300 text-emerald-950 text-xs font-black flex items-center gap-1.5 shadow-2xs">
                 <Link2 className="w-4 h-4 text-emerald-700" />
@@ -600,27 +1333,39 @@ export const TechnicalSupportAuditModal: React.FC<TechnicalSupportAuditModalProp
             {/* Overall Decision Badge */}
             <div
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border shadow-2xs ${
-                isMainQualified
+                isPendingAudit
+                  ? 'bg-amber-500 text-slate-950 border-amber-600'
+                  : isMainQualified
                   ? 'bg-emerald-700 text-white border-emerald-800'
                   : 'bg-rose-700 text-white border-rose-800'
               }`}
             >
-              {isMainQualified ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-              <span>حالة التأهيل (حسب المدقق): {isMainQualified ? 'مؤهل للاغلاق ( معتمد )' : 'غير مؤهل للأغلاق'}</span>
+              {isPendingAudit ? (
+                <MinusCircle className="w-4 h-4" />
+              ) : isMainQualified ? (
+                <CheckCircle2 className="w-4 h-4" />
+              ) : (
+                <XCircle className="w-4 h-4" />
+              )}
+              <span>
+                حالة التدقيق: {isPendingAudit ? 'قيد التدقيق (بانتظار التدقيق الفعلي)' : isMainQualified ? 'مؤهل للاغلاق ( معتمد )' : 'غير مؤهل للأغلاق'}
+              </span>
             </div>
 
             {/* Live Synced Attachment Status Badge */}
             <div
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border shadow-2xs ${
-                syncedAttachmentStatus === 'جاهز للارفاق الكامل'
+                !syncedAttachmentStatus
+                  ? 'bg-slate-100 text-slate-700 border-slate-300'
+                  : syncedAttachmentStatus === 'جاهز للارفاق الكامل'
                   ? 'bg-emerald-100 text-emerald-950 border-emerald-400'
                   : syncedAttachmentStatus.startsWith('جاهز لارفاق')
-                  ? 'bg-amber-100 text-amber-950 border-amber-400'
+                  ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
                   : 'bg-rose-100 text-rose-950 border-rose-300'
               }`}
             >
               <Link2 className="w-3.5 h-3.5 text-emerald-700" />
-              <span>حالة الإرفاق المتزامنة: {syncedAttachmentStatus}</span>
+              <span>حالة الإرفاق المتزامنة: {syncedAttachmentStatus || 'بانتظار التدقيق الفعلي'}</span>
             </div>
 
             {/* Audited Items Count */}
@@ -895,7 +1640,7 @@ export const TechnicalSupportAuditModal: React.FC<TechnicalSupportAuditModalProp
               <button
                 type="button"
                 disabled={isSaving}
-                onClick={() => triggerSync(checklistValues, mainStatus, evaluatedKeys, true)}
+                onClick={() => triggerSync(checklistValues, mainStatus, evaluatedKeys, itemUpdatedAt, true)}
                 className="px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-800 hover:to-teal-800 text-white text-xs font-black shadow-md transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 disabled:opacity-60"
               >
                 <Save className="w-4 h-4" />
@@ -905,7 +1650,14 @@ export const TechnicalSupportAuditModal: React.FC<TechnicalSupportAuditModalProp
           </div>
         </div>
       </div>
+
+      {/* نافذة مراحل التدقيق المنبثقة للاطلاع فقط */}
+      <AuditStagesReferenceModal
+        isOpen={isStagesModalOpen}
+        onClose={() => setIsStagesModalOpen(false)}
+        order={order}
+        columnTitle="تدقيق المساندة الفنية"
+      />
     </div>
   );
 };
-

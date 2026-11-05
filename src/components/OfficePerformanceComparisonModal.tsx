@@ -45,6 +45,8 @@ import { WorkOrder, SubOffice, ColumnDefinition } from '../types';
 import { exportToExcel, captureElementToImage, exportToPdf, exportToPptx } from '../services/exportService';
 import { soundService } from '../services/soundService';
 import { UnifiedSectionExportBar } from './UnifiedSectionExportBar';
+import { getEvaluatedSupportChecklistKeys } from './TechnicalSupportAuditModal';
+import { isOrderQualified100InAllThreeAudits, getEffectiveProcedure155Status } from '../utils/auditTracker';
 
 interface OfficePerformanceComparisonModalProps {
   isOpen: boolean;
@@ -92,9 +94,16 @@ export const OfficePerformanceComparisonModal: React.FC<OfficePerformanceCompari
       const total = officeOrders.length;
 
       // Status 1: Ready / Received for Procedure 155
-      const ready = officeOrders.filter(w => 
-        String(w.procedure155Status).includes('مؤهل') || String(w.procedure155Status).includes('تم')
-      ).length;
+      const ready = officeOrders.filter(w => {
+        const evalKeys = getEvaluatedSupportChecklistKeys(w);
+        const s = String(w.procedure155Status || '').trim();
+        const eff155 = getEffectiveProcedure155Status(w);
+        return (
+          isOrderQualified100InAllThreeAudits(w) ||
+          (!eff155.includes('غير') && (eff155.includes('مؤهل') || eff155.includes('تم'))) ||
+          (evalKeys.length > 0 && !s.includes('غير') && (s.includes('مؤهل') || s.includes('معتمد')))
+        );
+      }).length;
 
       // Status 2: Pending Deficiencies & Notes
       const pending = officeOrders.filter(w => 
@@ -105,12 +114,10 @@ export const OfficePerformanceComparisonModal: React.FC<OfficePerformanceCompari
 
       // Status 3: In Progress & Technical Audit
       const inProgress = officeOrders.filter(w => 
-        (String(w.executionStatus).includes('تنفيذ') || 
-         String(w.executionStatus).includes('قيد') || 
-         String(w.procedure155Status).includes('تدقيق')) &&
-        !String(w.procedure155Status).includes('مؤهل') &&
-        !String(w.procedure155Status).includes('تم') &&
-        !String(w.procedure155Status).includes('معلق')
+        String(w.procedure155Status || 'قيد التدقيق').includes('تدقيق') &&
+        !String(w.procedure155Status || '').includes('مؤهل') &&
+        !String(w.procedure155Status || '').includes('تم') &&
+        !String(w.procedure155Status || '').includes('معلق')
       ).length;
 
       // Status 4: Non-compliant / Rejected
@@ -119,12 +126,20 @@ export const OfficePerformanceComparisonModal: React.FC<OfficePerformanceCompari
         String(w.procedure155Status).includes('مرفوض')
       ).length;
 
-      // Other calculated indicators
-      const withPhotos = officeOrders.filter(w => w.photos && w.photos.length > 0).length;
-      const totalPhotos = officeOrders.reduce((acc, curr) => acc + (curr.photos ? curr.photos.length : 0), 0);
+      // Other calculated indicators (Strictly real platform columns)
+      const withPhotos = officeOrders.filter(
+        w =>
+          (w.photos && w.photos.length > 0) ||
+          (w.photosFile && w.photosFile.length > 0) ||
+          String(w.attachmentStatus || '').includes('جاهز')
+      ).length;
+      const totalPhotos = officeOrders.reduce(
+        (acc, curr) => acc + (curr.photos ? curr.photos.length : 0) + (curr.photosFile ? curr.photosFile.length : 0),
+        0
+      );
 
       const boqCount = officeOrders.filter(w => 
-        String(w.boqModification).includes('نعم') || String(w.boqModification).includes('تعديل')
+        Boolean(w.qualityNotes && String(w.qualityNotes).trim().length > 0 && String(w.qualityNotes).trim() !== '-')
       ).length;
 
       const completionRate = total > 0 ? Math.round((ready / total) * 100) : 0;
@@ -322,8 +337,8 @@ export const OfficePerformanceComparisonModal: React.FC<OfficePerformanceCompari
       'معلق لنواقص وملاحظات',
       'غير مطابق',
       'نسبة الإنجاز %',
-      'نسبة التوثيق بالصور %',
-      'تعديلات المقايسة',
+      'نسبة الإرفاق والصور %',
+      'ملاحظات الجودة',
       'تقييم الأداء الشامل (من 100)',
       'تصنيف الأداء'
     ];
@@ -396,10 +411,10 @@ export const OfficePerformanceComparisonModal: React.FC<OfficePerformanceCompari
       dir="rtl"
     >
       <div 
-        className="bg-white w-full max-w-6xl max-h-[95vh] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 text-right"
+        className="bg-white w-full max-w-6xl max-h-[95vh] rounded-2xl shadow-2xl border-2 border-[#F58220]/70 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 text-right"
       >
         {/* Top Header */}
-        <div className="bg-slate-900 text-white px-4 sm:px-6 py-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 shrink-0">
+        <div className="bg-gradient-to-l from-[#002855] via-[#003B73] to-[#004B8D] text-white px-4 sm:px-6 py-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b-2 border-[#F58220] shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 via-amber-600 to-amber-700 text-white flex items-center justify-center shadow-md shrink-0">
               <Award className="w-5 h-5 text-amber-100" />
@@ -890,10 +905,10 @@ export const OfficePerformanceComparisonModal: React.FC<OfficePerformanceCompari
                         نسبة الإنجاز %
                       </th>
                       <th className="py-3 px-2 text-center font-black border-l border-slate-800">
-                        توثيق الصور %
+                        الإرفاق والصور %
                       </th>
                       <th className="py-3 px-2 text-center font-black border-l border-slate-800">
-                        تعديل مقايسة
+                        ملاحظات الجودة
                       </th>
                       <th className="py-3 px-3 text-center font-black border-l border-slate-800 bg-amber-950/90 text-amber-300">
                         التقييم الشامل
@@ -1143,27 +1158,27 @@ export const OfficePerformanceComparisonModal: React.FC<OfficePerformanceCompari
               >
                 <div className="space-y-4">
                   {/* Official Header Strictly Conforming to User Requirements */}
-                  <div className="flex items-center justify-between border-b-2 border-slate-900 pb-2.5">
+                  <div className="flex items-center justify-between bg-[#002855] text-white border-b-3 border-[#F58220] px-4 py-2.5 rounded-t-xl">
                     {/* Right: Platform Header with Graded Typography */}
                     <div className="text-right flex flex-col gap-0.5">
-                      <span className="text-sm sm:text-base font-black text-slate-950 leading-tight">
+                      <span className="text-sm sm:text-base font-black text-white leading-tight">
                         حوكمة جودة اعمال الانشاءات
                       </span>
-                      <span className="text-xs sm:text-[13px] font-bold text-slate-800 leading-tight">
+                      <span className="text-xs sm:text-[13px] font-bold text-[#FDB813] leading-tight">
                         منظومة ادارة كهرباء الحدود الشمالية
                       </span>
-                      <span className="text-[11px] font-semibold text-slate-600 leading-tight">
+                      <span className="text-[11px] font-semibold text-blue-200 leading-tight">
                         المساندة الفنية
                       </span>
                     </div>
 
                     <div className="text-center">
-                      <h2 className="text-xs sm:text-sm font-black text-slate-950">
+                      <h2 className="text-xs sm:text-sm font-black text-[#FDB813]">
                         مقارنة أداء المكاتب
                       </h2>
                     </div>
 
-                    <div className="text-left font-mono text-xs font-bold text-slate-800">
+                    <div className="text-left font-mono text-xs font-bold text-white">
                       التاريخ: {new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())}
                     </div>
                   </div>
@@ -1197,18 +1212,18 @@ export const OfficePerformanceComparisonModal: React.FC<OfficePerformanceCompari
                   <div className="overflow-hidden rounded-xl border border-slate-300">
                     <table className="w-full text-right border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
                       <thead>
-                        <tr className="bg-slate-900 text-white">
-                          <th className="py-2.5 px-2 text-center border border-slate-800 w-[36px]">#</th>
-                          <th className="py-2.5 px-3 border border-slate-800 w-[135px]">المكتب الفرعي</th>
-                          <th className="py-2.5 px-3 border border-slate-800 w-[180px]">المقاول المعتمد</th>
-                          <th className="py-2.5 px-2 text-center border border-slate-800 w-[85px]">إجمالي الأوامر</th>
-                          <th className="py-2.5 px-2 text-center border border-slate-800 bg-emerald-950 text-emerald-300 w-[85px]">مؤهل 155</th>
-                          <th className="py-2.5 px-2 text-center border border-slate-800 bg-blue-950 text-blue-300 w-[85px]">قيد التنفيذ</th>
-                          <th className="py-2.5 px-2 text-center border border-slate-800 bg-amber-950 text-amber-300 w-[85px]">معلق لنواقص</th>
-                          <th className="py-2.5 px-2 text-center border border-slate-800 w-[85px]">نسبة الإنجاز</th>
-                          <th className="py-2.5 px-2 text-center border border-slate-800 w-[90px]">التوثيق بالصور</th>
-                          <th className="py-2.5 px-2 text-center border border-slate-800 w-[85px]">التقييم العام</th>
-                          <th className="py-2.5 px-2 text-center border border-slate-800">التصنيف</th>
+                        <tr className="bg-[#002855] text-white border-b-2 border-[#F58220]">
+                          <th className="py-2.5 px-2 text-center border border-[#1e3a8a] w-[36px]">#</th>
+                          <th className="py-2.5 px-3 border border-[#1e3a8a] w-[135px]">المكتب الفرعي</th>
+                          <th className="py-2.5 px-3 border border-[#1e3a8a] w-[180px]">المقاول المعتمد</th>
+                          <th className="py-2.5 px-2 text-center border border-[#1e3a8a] w-[85px]">إجمالي الأوامر</th>
+                          <th className="py-2.5 px-2 text-center border border-[#1e3a8a] bg-emerald-950 text-emerald-300 w-[85px]">مؤهل 155</th>
+                          <th className="py-2.5 px-2 text-center border border-[#1e3a8a] bg-blue-950 text-blue-300 w-[85px]">قيد التنفيذ</th>
+                          <th className="py-2.5 px-2 text-center border border-[#1e3a8a] bg-amber-950 text-amber-300 w-[85px]">معلق لنواقص</th>
+                          <th className="py-2.5 px-2 text-center border border-[#1e3a8a] w-[85px]">نسبة الإنجاز</th>
+                          <th className="py-2.5 px-2 text-center border border-[#1e3a8a] w-[90px]">التوثيق بالصور</th>
+                          <th className="py-2.5 px-2 text-center border border-[#1e3a8a] w-[85px]">التقييم العام</th>
+                          <th className="py-2.5 px-2 text-center border border-[#1e3a8a]">التصنيف</th>
                         </tr>
                       </thead>
                       <tbody>

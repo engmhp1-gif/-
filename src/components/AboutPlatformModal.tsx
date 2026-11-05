@@ -43,32 +43,29 @@ export const AboutPlatformModal: React.FC<AboutPlatformModalProps> = ({ isOpen, 
     username: '2502331172',
     mobile: '+966598760284',
     extension: '47096',
-    systemTitle: 'منظومة حوكمة جودة اعمال الانشاءات • إجراء 155'
+    systemTitle: 'منصة حوكمة جودة أعمال الإنشاءات – إجراء 155'
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 text-right animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 text-right animate-in fade-in duration-200">
       <div 
-        className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-xl w-full overflow-hidden flex flex-col transform transition-all"
+        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-xl w-full overflow-hidden flex flex-col transform transition-all"
         dir="rtl"
       >
-        {/* Header with Emerald Gradient */}
-        <div className="relative bg-gradient-to-r from-emerald-950 via-slate-900 to-teal-950 text-white p-6 overflow-hidden border-b border-emerald-800/40">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
-          <div className="absolute bottom-0 left-0 w-48 h-48 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
-
+        {/* Header with Deep Corporate Blue #004B8D */}
+        <div className="relative bg-[#004B8D] text-white p-6 overflow-hidden border-b border-blue-900">
           <div className="relative flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 text-white flex items-center justify-center shadow-lg shadow-emerald-900/40 border border-emerald-400/40 shrink-0">
-                <Award className="w-6 h-6 text-amber-300" />
+              <div className="w-12 h-12 rounded-xl bg-white/15 border border-white/20 text-[#F58220] flex items-center justify-center shadow-md shrink-0">
+                <Award className="w-6 h-6" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-black tracking-wider uppercase bg-amber-400/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-400/30">
-                    بطاقة التوثيق والاعتماد
+                  <span className="text-[11px] font-black tracking-wider bg-[#F58220] text-white px-2 py-0.5 rounded">
+                    حوكمة جودة أعمال الإنشاءات
                   </span>
-                  <span className="text-[11px] font-bold text-emerald-300/80">
-                    Quality Hub 155
+                  <span className="text-[11px] font-bold text-blue-100">
+                    إجراء 155
                   </span>
                 </div>
                 <h2 className="text-lg sm:text-xl font-black text-white mt-1">
@@ -80,15 +77,15 @@ export const AboutPlatformModal: React.FC<AboutPlatformModalProps> = ({ isOpen, 
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+              className="p-2 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer shrink-0"
               title="إغلاق النافذة"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
 
-          <p className="relative text-xs text-emerald-200/90 font-medium mt-3 leading-relaxed">
-            منظومة رقمية ذكية متقدمة لتدقيق وضبط جودة أعمال الإنشاءات واستلام أوامر العمل قبل إجراء 155
+          <p className="relative text-xs text-blue-100 font-medium mt-3 leading-relaxed">
+            منظومة رقمية مؤسسية لحوكمة جودة أعمال الإنشاءات وإدارة المشاريع الرأسمالية واعتماد أوامر العمل قبل إجراء 155
           </p>
         </div>
 

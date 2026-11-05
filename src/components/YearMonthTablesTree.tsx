@@ -247,12 +247,14 @@ export const YearMonthTablesTree: React.FC<YearMonthTablesTreeProps> = ({
 
                     // Filter tables in this month
                     const customTables = monthTables.filter(t => t.year === year && (t.month === monthItem.num || t.month === 'all'));
-                    const defaultTableId = getDefaultTableId(year, monthItem.num);
-                    const defaultTableCounts = tableCountsMap.get(defaultTableId) || { total: 0, ready: 0 };
-                    
-                    const monthTotalOrders = orders.filter(o => {
+                    const monthOrdersList = orders.filter(o => {
                       const scope = resolveOrderScope(o, monthTables);
                       return scope.year === year && scope.month === monthItem.num;
+                    });
+                    const monthTotalOrders = monthOrdersList.length;
+                    const monthReady155Orders = monthOrdersList.filter(o => {
+                      const s = String(o.procedure155Status || '');
+                      return !s.includes('غير') && (s.includes('مؤهل') || s.includes('معتمد') || s.includes('تم'));
                     }).length;
 
                     // Search filter check
@@ -310,6 +312,7 @@ export const YearMonthTablesTree: React.FC<YearMonthTablesTreeProps> = ({
                             
                             {/* 1. Default Month Table */}
                             {(() => {
+                              const defaultTableId = getDefaultTableId(year, monthItem.num);
                               const isTableSelected = activeYear === year && (activeMonth === monthItem.num || activeMonth === 'all') && (isDefaultTableId(selectedTableId) || selectedTableId === defaultTableId);
                               return (
                                 <div className={`p-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 ${
@@ -326,10 +329,10 @@ export const YearMonthTablesTree: React.FC<YearMonthTablesTreeProps> = ({
                                     <div className="truncate">
                                       <div className="flex items-center gap-1.5 flex-wrap">
                                         <span className="text-xs font-black text-slate-900 truncate">
-                                          الجدول الرئيسي ({monthItem.name} {year})
+                                          الجدول التجميعي الشامل ({monthItem.name} {year})
                                         </span>
-                                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">
-                                          افتراضي
+                                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-blue-100 text-blue-800">
+                                          تجميعي شامل
                                         </span>
                                         {isTableSelected && (
                                           <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-emerald-600 text-white animate-pulse">
@@ -338,14 +341,14 @@ export const YearMonthTablesTree: React.FC<YearMonthTablesTreeProps> = ({
                                         )}
                                       </div>
                                       <div className="text-[10px] text-slate-500 font-medium">
-                                        {defaultTableCounts.total} أمر عمل • {defaultTableCounts.ready} مؤهل 155
+                                        {monthTotalOrders} أمر عمل • {monthReady155Orders} مؤهل 155 • شامل لكافة الأوامر
                                       </div>
                                     </div>
                                   </div>
 
                                   <button
                                     type="button"
-                                    onClick={() => onSelectTable(year, monthItem.num, defaultTableId)}
+                                    onClick={() => onSelectTable(year, monthItem.num, getDefaultTableId(year, monthItem.num))}
                                     className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
                                       isTableSelected
                                         ? 'bg-blue-600 text-white shadow-xs'

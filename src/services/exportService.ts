@@ -1,7 +1,12 @@
 import { WorkOrder, ColumnDefinition } from '../types';
 import { getAuthHeaders } from '../utils/security';
 import { ensurePhotosFileColumn } from '../data/initialData';
-import { calculateOverallAuditColumnSummary } from '../data/auditChecklistData';
+import {
+  calculateOverallAuditColumnSummary,
+  calculateAggregate18ChecklistsCompliance,
+  formatOrderAudit18SummaryText,
+  AUDIT_CATEGORIES_META
+} from '../data/auditChecklistData';
 import ExcelJS from 'exceljs';
 import { jsPDF } from 'jspdf';
 import pptxgen from 'pptxgenjs';
@@ -441,17 +446,36 @@ function createOffscreenExportContainer(
   }
 
   const totalPages = Math.max(1, chunks.length);
-  const readyCount = orders.filter(w => {
+  const evaluatedOrders = orders.filter(w => {
+    const s = String(w.procedure155Status || '').trim();
+    return s !== '' && s !== 'قيد التدقيق' && s !== 'غير محدد' && s !== '-';
+  });
+  const readyCount = evaluatedOrders.filter(w => {
     const s = String(w.procedure155Status || '');
     return s.includes('مؤهل') && !s.includes('غير');
   }).length;
-  const notReadyCount = orders.length - readyCount;
-  const complianceRate = orders.length > 0 ? Math.round((readyCount / orders.length) * 100) : 0;
+  const notReadyCount = evaluatedOrders.filter(w => {
+    const s = String(w.procedure155Status || '');
+    return s.includes('غير') || (!s.includes('مؤهل') && !s.includes('معتمد') && !s.includes('تم'));
+  }).length;
+  const complianceRate = evaluatedOrders.length > 0 ? Math.round((readyCount / evaluatedOrders.length) * 100) : 0;
+  const agg18 = calculateAggregate18ChecklistsCompliance(orders);
+  const actualComplianceRate = agg18.actualComplianceRate;
   const todayStr = new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', {
     year: 'numeric',
     month: 'long',
     day: 'numeric'
   }).format(new Date());
+
+  let cachedCustomRowColors: Record<string, string> = {};
+  try {
+    if (typeof window !== 'undefined') {
+      const savedColors = localStorage.getItem('sec_custom_row_colors');
+      if (savedColors) {
+        cachedCustomRowColors = JSON.parse(savedColors) || {};
+      }
+    }
+  } catch (_) {}
 
   chunks.forEach((chunk, pageIndex) => {
     const isFirstPage = pageIndex === 0;
@@ -481,19 +505,19 @@ function createOffscreenExportContainer(
       .replace(/جميع المكاتب الفرعية/g, '')
       .trim() || 'سجل أوامر العمل';
 
-    // 1. Header Block - Unified Standard: Right: Graded Title, Center: Concise Name, Left: Date only
+    // 1. Header Block - Unified Corporate Navy & Amber Standard
     let headerHtml = `
-      <div style="width: 100%; border-bottom: 2px solid #1e3a8a; padding-bottom: 8px; margin-bottom: 8px;">
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+      <div style="width: 100%; border-bottom: 2.5px solid #F58220; padding-bottom: 8px; margin-bottom: 8px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; background: linear-gradient(90deg, #004B8D 0%, #002855 100%); color: #ffffff; padding: 8px 14px; border-radius: 8px;">
           <div style="text-align: right; line-height: 1.35;">
-            <div style="font-size: 13px; font-weight: 900; color: #003865;">حوكمة جودة اعمال الانشاءات</div>
-            <div style="font-size: 11.5px; font-weight: 700; color: #1e293b;">منظومة ادارة كهرباء الحدود الشمالية</div>
-            <div style="font-size: 10.5px; font-weight: 600; color: #475569;">المساندة الفنية</div>
+            <div style="font-size: 13px; font-weight: 900; color: #FDB813;">حوكمة جودة أعمال الإنشاءات</div>
+            <div style="font-size: 11.5px; font-weight: 700; color: #ffffff;">منظومة إدارة كهرباء الحدود الشمالية</div>
+            <div style="font-size: 10.5px; font-weight: 600; color: #bfdbfe;">المساندة الفنية • إجراء 155</div>
           </div>
-          <div style="text-align: center; font-size: 14px; font-weight: 900; color: #0f172a; padding: 3px 14px; background: #f1f5f9; border-radius: 6px; border: 1px solid #cbd5e1;">
+          <div style="text-align: center; font-size: 13.5px; font-weight: 900; color: #002855; padding: 4px 16px; background: #FDB813; border-radius: 6px; border: 1px solid #F58220;">
             ${conciseTableName}
           </div>
-          <div style="text-align: left; font-size: 12px; font-weight: 700; color: #334155; font-family: monospace;">
+          <div style="text-align: left; font-size: 11.5px; font-weight: 700; color: #e2e8f0; font-family: monospace;">
             التاريخ: ${todayStr}
           </div>
         </div>
@@ -503,24 +527,28 @@ function createOffscreenExportContainer(
     if (isFirstPage) {
       headerHtml += `
         <div style="text-align: center; font-size: 11px; font-weight: 900; color: #0f172a; margin-top: 6px; margin-bottom: 3px;">
-          ( مؤشرات الاداء )
+          ( مؤشرات الأداء وملخص امتثال القوائم الـ 18 - 197 بند فحص )
         </div>
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; text-align: center;">
-          <div style="padding: 6px; border-radius: 8px; background: #f8fafc; border: 1px solid #e2e8f0;">
-            <span style="font-size: 10px; color: #64748b; font-weight: 700; display: block;">أوامر العمل</span>
-            <strong style="font-size: 14px; font-weight: 900; color: #0f172a; font-family: monospace;">${orders.length}</strong>
+        <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; text-align: center;">
+          <div style="padding: 5px; border-radius: 8px; background: #f8fafc; border: 1px solid #e2e8f0;">
+            <span style="font-size: 9.5px; color: #64748b; font-weight: 700; display: block;">أوامر العمل</span>
+            <strong style="font-size: 13px; font-weight: 900; color: #0f172a; font-family: monospace;">${orders.length}</strong>
           </div>
-          <div style="padding: 6px; border-radius: 8px; background: #ecfdf5; border: 1px solid #a7f3d0;">
-            <span style="font-size: 10px; color: #065f46; font-weight: 700; display: block;">مؤهل للاغلاق (معتمد)</span>
-            <strong style="font-size: 14px; font-weight: 900; color: #047857; font-family: monospace;">${readyCount}</strong>
+          <div style="padding: 5px; border-radius: 8px; background: #ecfdf5; border: 1px solid #a7f3d0;">
+            <span style="font-size: 9.5px; color: #065f46; font-weight: 700; display: block;">مؤهل للاغلاق (155)</span>
+            <strong style="font-size: 13px; font-weight: 900; color: #047857; font-family: monospace;">${readyCount} (${complianceRate}%)</strong>
           </div>
-          <div style="padding: 6px; border-radius: 8px; background: #fff1f2; border: 1px solid #fecdd3;">
-            <span style="font-size: 10px; color: #9f1239; font-weight: 700; display: block;">غير مؤهل للأغلاق</span>
-            <strong style="font-size: 14px; font-weight: 900; color: #be123c; font-family: monospace;">${notReadyCount}</strong>
+          <div style="padding: 5px; border-radius: 8px; background: #fff1f2; border: 1px solid #fecdd3;">
+            <span style="font-size: 9.5px; color: #9f1239; font-weight: 700; display: block;">غير مؤهل للأغلاق</span>
+            <strong style="font-size: 13px; font-weight: 900; color: #be123c; font-family: monospace;">${notReadyCount}</strong>
           </div>
-          <div style="padding: 6px; border-radius: 8px; background: #eff6ff; border: 1px solid #bfdbfe;">
-            <span style="font-size: 10px; color: #1e40af; font-weight: 700; display: block;">نسبة المطابقة الفنية</span>
-            <strong style="font-size: 14px; font-weight: 900; color: #1d4ed8; font-family: monospace;">${complianceRate}%</strong>
+          <div style="padding: 5px; border-radius: 8px; background: #f0fdfa; border: 1px solid #99f6e4;">
+            <span style="font-size: 9.5px; color: #115e59; font-weight: 700; display: block;">امتثال القوائم الـ 18 (PDC / الإنشاءات)</span>
+            <strong style="font-size: 12px; font-weight: 900; color: #0f766e; font-family: monospace;">PDC: ${agg18.pdcComplianceRate}% | إنشاءات: ${agg18.constComplianceRate}%</strong>
+          </div>
+          <div style="padding: 5px; border-radius: 8px; background: #eff6ff; border: 1px solid #bfdbfe;">
+            <span style="font-size: 9.5px; color: #1e40af; font-weight: 700; display: block;">نسبة المطابقة الفعلية الشاملة</span>
+            <strong style="font-size: 13.5px; font-weight: 900; color: #1d4ed8; font-family: monospace;">${actualComplianceRate}%</strong>
           </div>
         </div>
       `;
@@ -546,17 +574,7 @@ function createOffscreenExportContainer(
       chunk.forEach((wo, rowIdx) => {
         const globalIdx = previousCapacitySum + rowIdx + 1;
         const isEdited = Boolean(wo.isEdited);
-
-        let customRowColor: string | undefined;
-        try {
-          if (typeof window !== 'undefined') {
-            const savedColors = localStorage.getItem('sec_custom_row_colors');
-            if (savedColors) {
-              const parsed = JSON.parse(savedColors);
-              if (parsed && parsed[wo.id]) customRowColor = parsed[wo.id];
-            }
-          }
-        } catch (_) {}
+        const customRowColor = cachedCustomRowColors[wo.id];
 
         const rowBg = isEdited ? '#ffe4e6' : customRowColor || (rowIdx % 2 === 0 ? '#ffffff' : '#f8fafc');
         const numColor = isEdited ? '#991b1b' : '#1e3a8a';
@@ -582,71 +600,75 @@ function createOffscreenExportContainer(
             col.field === 'form200' ||
             col.field === 'inspectionForm'
           ) {
-            const displayVal = val || (col.field === 'attachmentStatus' ? 'غير جاهز للارفاق' : 'غير مكتمل');
-            let bBg = '#f1f5f9';
-            let bColor = '#334155';
-            let bBorder = '#cbd5e1';
+            const displayVal = val.trim();
+            if (!displayVal) {
+              cellContent = `<span style="display: block; width: 100%; min-height: 16px;"></span>`;
+            } else {
+              let bBg = '#f1f5f9';
+              let bColor = '#334155';
+              let bBorder = '#cbd5e1';
 
-            if (displayVal === 'مكتمل' || displayVal === 'جاهز للارفاق الكامل') {
-              bBg = '#d1fae5'; bColor = '#065f46'; bBorder = '#6ee7b7';
-            } else if (displayVal.includes('غير')) {
-              bBg = '#fee2e2'; bColor = '#991b1b'; bBorder = '#fca5a5';
-            } else if (displayVal.includes('ملاحظات') || displayVal.startsWith('جاهز لارفاق')) {
-              bBg = '#fef3c7'; bColor = '#92400e'; bBorder = '#fcd34d';
-            } else if (displayVal === 'لاينطبق') {
-              bBg = '#f1f5f9'; bColor = '#64748b'; bBorder = '#cbd5e1';
-            }
+              if (displayVal === 'مكتمل' || displayVal === 'جاهز للارفاق الكامل') {
+                bBg = '#d1fae5'; bColor = '#065f46'; bBorder = '#6ee7b7';
+              } else if (displayVal.includes('غير')) {
+                bBg = '#fee2e2'; bColor = '#991b1b'; bBorder = '#fca5a5';
+              } else if (displayVal.includes('ملاحظات') || displayVal.startsWith('جاهز لارفاق')) {
+                bBg = '#fef3c7'; bColor = '#92400e'; bBorder = '#fcd34d';
+              } else if (displayVal === 'لاينطبق') {
+                bBg = '#f1f5f9'; bColor = '#64748b'; bBorder = '#cbd5e1';
+              }
 
-            cellContent = `
-              <span style="display: block; width: 100%; text-align: center; padding: 2px 4px; border-radius: 4px; font-size: 9.5px; font-weight: bold; background: ${bBg}; color: ${bColor}; border: 1px solid ${bBorder}; box-sizing: border-box;">
-                ${displayVal}
-              </span>
-            `;
-          } else if (col.field === 'procedure155Status') {
-            const isQualified = val.includes('مؤهل') && !val.includes('غير');
-            const displayVal = val || 'مؤهل للاغلاق (معتمد)';
-            const chkItems = [
-              { label: 'صور', v: wo.photoDocumentation || 'غير مكتمل' },
-              { label: 'استشاري', v: wo.consultantForms || 'غير مكتمل' },
-              { label: 'إجازة', v: wo.consultantClearanceForms || 'غير مكتمل' },
-              { label: '190', v: wo.form190 || 'غير مكتمل' },
-              { label: '200', v: wo.form200 || 'غير مكتمل' },
-              { label: 'فحص', v: wo.inspectionForm || 'غير مكتمل' }
-            ];
-            const chkSummary = chkItems.map(c => `${c.label}:${c.v === 'مكتمل' ? '✓' : c.v.includes('لا') ? '−' : '✗'}`).join(' • ');
-            cellContent = `
-              <div style="text-align: center; line-height: 1.25;">
-                <span style="display: block; width: 100%; text-align: center; padding: 2px 4px; border-radius: 4px; font-size: 9px; font-weight: 800; background: ${isQualified ? '#047857' : '#be123c'}; color: #ffffff; box-sizing: border-box;">
+              cellContent = `
+                <span style="display: block; width: 100%; text-align: center; padding: 2px 4px; border-radius: 4px; font-size: 9.5px; font-weight: bold; background: ${bBg}; color: ${bColor}; border: 1px solid ${bBorder}; box-sizing: border-box;">
                   ${displayVal}
                 </span>
-                <div style="font-size: 6.5px; color: #334155; font-weight: 800; margin-top: 2px;">
-                  ${chkSummary}
+              `;
+            }
+          } else if (col.field === 'procedure155Status') {
+            const displayVal = val.trim() === 'قيد التدقيق' || val.trim() === 'غير محدد' ? '' : val.trim();
+            if (!displayVal) {
+              cellContent = `<span style="display: block; width: 100%; min-height: 16px;"></span>`;
+            } else {
+              const isQualified = displayVal.includes('مؤهل') && !displayVal.includes('غير');
+              cellContent = `
+                <div style="text-align: center; line-height: 1.25;">
+                  <span style="display: block; width: 100%; text-align: center; padding: 2.5px 4px; border-radius: 4px; font-size: 9.5px; font-weight: 800; background: ${isQualified ? '#047857' : '#be123c'}; color: #ffffff; box-sizing: border-box;">
+                    ${displayVal}
+                  </span>
                 </div>
-              </div>
-            `;
+              `;
+            }
           } else if (col.field === 'procedure155') {
-            const isQual = val.includes('مؤهل') && !val.includes('غير');
-            const displayVal = val || 'مؤهل لأجراء 155';
-            cellContent = `
-              <span style="display: block; width: 100%; text-align: center; padding: 2.5px 4px; border-radius: 4px; font-size: 9.5px; font-weight: 800; background: ${isQual ? '#047857' : val.includes('غير') ? '#be123c' : '#1d4ed8'}; color: #ffffff; box-sizing: border-box;">
-                ${displayVal}
-              </span>
-            `;
+            const displayVal = val.trim();
+            if (!displayVal) {
+              cellContent = `<span style="display: block; width: 100%; min-height: 16px;"></span>`;
+            } else {
+              const isQual = displayVal.includes('مؤهل') && !displayVal.includes('غير');
+              cellContent = `
+                <span style="display: block; width: 100%; text-align: center; padding: 2.5px 4px; border-radius: 4px; font-size: 9.5px; font-weight: 800; background: ${isQual ? '#047857' : displayVal.includes('غير') ? '#be123c' : '#1d4ed8'}; color: #ffffff; box-sizing: border-box;">
+                  ${displayVal}
+                </span>
+              `;
+            }
           } else if (col.field === 'statusSyncTime' || col.field === 'procedureSyncTime') {
             const isStatus = col.field === 'statusSyncTime';
             const rawEmail = isStatus
               ? (wo.statusSyncEmail || (val && val.includes('|') ? val.split('|')[1]?.trim() : ''))
               : (wo.procedureSyncEmail || (val && val.includes('|') ? val.split('|')[1]?.trim() : ''));
-            const displayTime = val && val.includes('|') ? val.split('|')[0]?.trim() : (val || '-');
-            const emailColor = isStatus ? '#047857' : '#1d4ed8';
-            const emailBg = isStatus ? '#ecfdf5' : '#eff6ff';
-            const emailBorder = isStatus ? '#a7f3d0' : '#bfdbfe';
-            cellContent = `
-              <div style="font-family: monospace; font-size: 8px; font-weight: 800; color: #0f172a; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 1.5px; padding: 1px 0;">
-                <span style="display: block; font-weight: 900; color: #1e293b;">${displayTime}</span>
-                ${rawEmail ? `<span style="display: block; font-size: 7px; font-weight: 700; color: ${emailColor}; background: ${emailBg}; border: 1px solid ${emailBorder}; border-radius: 3px; padding: 0.5px 3px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" dir="ltr">${rawEmail}</span>` : ''}
-              </div>
-            `;
+            const displayTime = val && val.includes('|') ? val.split('|')[0]?.trim() : val.trim();
+            if (!displayTime) {
+              cellContent = `<span style="display: block; width: 100%; min-height: 16px;"></span>`;
+            } else {
+              const emailColor = isStatus ? '#047857' : '#1d4ed8';
+              const emailBg = isStatus ? '#ecfdf5' : '#eff6ff';
+              const emailBorder = isStatus ? '#a7f3d0' : '#bfdbfe';
+              cellContent = `
+                <div style="font-family: monospace; font-size: 8px; font-weight: 800; color: #0f172a; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 1.5px; padding: 1px 0;">
+                  <span style="display: block; font-weight: 900; color: #1e293b;">${displayTime}</span>
+                  ${rawEmail ? `<span style="display: block; font-size: 7px; font-weight: 700; color: ${emailColor}; background: ${emailBg}; border: 1px solid ${emailBorder}; border-radius: 3px; padding: 0.5px 3px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" dir="ltr">${rawEmail}</span>` : ''}
+                </div>
+              `;
+            }
           } else if (col.field === 'workOrderNumber') {
             cellContent = `
               <span style="font-family: monospace; font-weight: 800; color: ${numColor}; font-size: 10px; display: block; text-align: center;">
@@ -687,7 +709,7 @@ function createOffscreenExportContainer(
                 </div>
               `).join('');
               cellContent = `<div style="max-height: 140px; overflow: hidden;">${itemsHtml}</div>`;
-            } else if (clean && clean !== '-') {
+            } else if (clean && clean !== '-' && clean !== 'لا توجد ملاحظات حالياً' && clean !== 'لا توجد ملاحظات') {
               const isLongNote = clean.length > 70;
               const singlePhotos = noteItems?.[0]?.photos || [];
               cellContent = `
@@ -700,38 +722,40 @@ function createOffscreenExportContainer(
                 </div>
               `;
             } else {
-              cellContent = `
-                <span style="font-size: 9.5px; color: #94a3b8; font-weight: 700; display: block; text-align: center;">-</span>
-              `;
+              cellContent = `<span style="display: block; width: 100%; min-height: 16px;"></span>`;
             }
           } else if (col.field === 'pdcAudit' || col.field === 'constructionAudit') {
             const rawAudit = (wo as any)[col.field];
             const overall = typeof rawAudit === 'object' && rawAudit !== null ? calculateOverallAuditColumnSummary(rawAudit) : null;
+            const evalKeys = typeof rawAudit === 'object' && rawAudit !== null && Array.isArray(rawAudit.evaluatedKeys) ? rawAudit.evaluatedKeys : [];
+            const evaluatedCats = overall ? (overall.compliantCategories + overall.nonCompliantCategories + overall.naCategories) : 0;
             const main =
-              overall && (overall.compliantCategories > 0 || overall.nonCompliantCategories > 0 || overall.naCategories > 0)
+              overall && evaluatedCats > 0
                 ? overall.derivedMainStatus
-                : rawAudit?.mainStatus && rawAudit.mainStatus !== 'غير محدد'
+                : rawAudit?.mainStatus && rawAudit.mainStatus !== 'غير محدد' && rawAudit.mainStatus !== 'قيد التدقيق'
                 ? rawAudit.mainStatus
                 : typeof rawAudit === 'string' && (rawAudit === 'مؤهل' || rawAudit === 'غير مؤهل')
                 ? rawAudit
-                : 'قيد التدقيق';
-            const hasCategories =
-              overall && (overall.compliantCategories > 0 || overall.nonCompliantCategories > 0 || overall.naCategories > 0);
+                : '';
 
-            cellContent = `
-              <div style="font-size: 8px; text-align: center; line-height: 1.25;">
-                <span style="display: inline-block; padding: 1px 4px; border-radius: 3px; font-weight: 900; background: ${main === 'مؤهل' ? '#ecfdf5; color: #065f46; border: 1px solid #a7f3d0;' : main === 'غير مؤهل' ? '#fff1f2; color: #9f1239; border: 1px solid #fecdd3;' : '#f1f5f9; color: #475569;'}">
-                  ${main}
-                </span>
-                ${
-                  hasCategories
-                    ? `<div style="font-size: 7px; color: #64748b; margin-top: 2px;">
-                        ${overall.averageCompliance}% (م:${overall.compliantCategories} • غ:${overall.nonCompliantCategories})
-                      </div>`
-                    : ''
-                }
-              </div>
-            `;
+            if (!main && evalKeys.length === 0 && evaluatedCats === 0) {
+              cellContent = `<span style="display: block; width: 100%; min-height: 16px;"></span>`;
+            } else {
+              cellContent = `
+                <div style="font-size: 8px; text-align: center; line-height: 1.25;">
+                  <span style="display: inline-block; padding: 1px 4px; border-radius: 3px; font-weight: 900; background: ${main === 'مؤهل' ? '#ecfdf5; color: #065f46; border: 1px solid #a7f3d0;' : main === 'غير مؤهل' ? '#fff1f2; color: #9f1239; border: 1px solid #fecdd3;' : '#f1f5f9; color: #475569;'}">
+                    ${main}
+                  </span>
+                  ${
+                    evaluatedCats > 0 && overall
+                      ? `<div style="font-size: 7px; color: #334155; font-weight: 800; margin-top: 2px;">
+                          ${overall.averageCompliance}% (${evaluatedCats}/18 قائمة: م${overall.compliantCategories}•غ${overall.nonCompliantCategories})
+                        </div>`
+                      : ''
+                  }
+                </div>
+              `;
+            }
           } else {
             cellContent = `
               <span style="font-size: 9.5px; font-weight: 800; color: #0f172a; display: block; text-align: ${col.field === 'contractor' || col.field === 'consultant' ? 'right' : 'center'}; word-break: break-word;">
@@ -780,13 +804,13 @@ function createOffscreenExportContainer(
     }
 
     const tableHtml = `
-      <div style="width: 100%; flex: 1; display: flex; flex-direction: column; min-height: 0; margin: 4px 0; border: 2px solid #334155; border-radius: 8px; overflow: hidden; box-sizing: border-box;">
+      <div style="width: 100%; flex: 1; display: flex; flex-direction: column; min-height: 0; margin: 4px 0; border: 2px solid #002855; border-radius: 8px; overflow: hidden; box-sizing: border-box;">
         <table style="width: 100%; height: 100%; table-layout: fixed; border-collapse: collapse; text-align: right; box-sizing: border-box;">
-          <thead style="background: #991b1b; color: #ffffff;">
-            <tr style="border-bottom: 2px solid #7f1d1d;">
-              <th style="padding: 5px; text-align: center; border-left: 1px solid #7f1d1d; width: 3.5%; font-family: monospace; font-size: 10px; font-weight: 900;">#</th>
+          <thead style="background: #002855; color: #ffffff;">
+            <tr style="border-bottom: 2.5px solid #F58220;">
+              <th style="padding: 5px; text-align: center; border-left: 1px solid #1e3a8a; width: 3.5%; font-family: monospace; font-size: 10px; font-weight: 900; color: #FDB813;">#</th>
               ${colsToRender.map((c, i) => `
-                <th style="padding: 5px 6px; font-size: 10px; font-weight: 900; text-align: ${c.field === 'contractor' ? 'right' : 'center'}; width: ${c.width}; ${i < colsToRender.length - 1 ? 'border-left: 1px solid #7f1d1d;' : ''}">
+                <th style="padding: 5px 6px; font-size: 10px; font-weight: 900; text-align: ${c.field === 'contractor' ? 'right' : 'center'}; width: ${c.width}; ${i < colsToRender.length - 1 ? 'border-left: 1px solid #1e3a8a;' : ''}">
                   ${c.title}
                 </th>
               `).join('')}
@@ -923,10 +947,10 @@ const THIN_BORDER: Partial<ExcelJS.Borders> = {
 };
 
 const HEADER_BORDER: Partial<ExcelJS.Borders> = {
-  top: { style: 'medium', color: { argb: 'FF450A0A' } },
-  left: { style: 'thin', color: { argb: 'FF7F1D1D' } },
-  bottom: { style: 'medium', color: { argb: 'FF450A0A' } },
-  right: { style: 'thin', color: { argb: 'FF7F1D1D' } }
+  top: { style: 'medium', color: { argb: 'FF002855' } },
+  left: { style: 'thin', color: { argb: 'FF1E3A8A' } },
+  bottom: { style: 'medium', color: { argb: 'FFF58220' } },
+  right: { style: 'thin', color: { argb: 'FF1E3A8A' } }
 };
 
 /**
@@ -1015,15 +1039,23 @@ export function buildExcelWorkbook(
   const totalCols = activeCols.length + 1; // +1 for sequence column 'م'
   const lastColLetter = getExcelColName(totalCols);
 
-  // Calculate statistics
+  // Calculate statistics & 18-checklists compliance summary (counting only filled/evaluated rows)
   const totalCount = orders.length;
-  const readyCount = orders.filter(w => {
+  const evaluatedOrders = orders.filter(w => {
+    const s = String(w.procedure155Status || '').trim();
+    return s !== '' && s !== 'قيد التدقيق' && s !== 'غير محدد' && s !== '-';
+  });
+  const readyCount = evaluatedOrders.filter(w => {
     const s = String(w.procedure155Status || '');
     return s.includes('مؤهل') && !s.includes('غير');
   }).length;
-  const pendingCount = totalCount - readyCount;
-  const readyRate = totalCount > 0 ? Math.round((readyCount / totalCount) * 100) : 0;
+  const pendingCount = evaluatedOrders.filter(w => {
+    const s = String(w.procedure155Status || '');
+    return s.includes('غير') || (!s.includes('مؤهل') && !s.includes('معتمد') && !s.includes('تم'));
+  }).length;
+  const readyRate = evaluatedOrders.length > 0 ? Math.round((readyCount / evaluatedOrders.length) * 100) : 0;
   const editedCount = orders.filter(w => w.isEdited).length;
+  const agg18 = calculateAggregate18ChecklistsCompliance(orders);
 
   const BORDER_CARD_HEADER: Partial<ExcelJS.Borders> = {
     top: { style: 'thin', color: { argb: 'FF94A3B8' } },
@@ -1032,24 +1064,24 @@ export function buildExcelWorkbook(
     right: { style: 'thin', color: { argb: 'FF94A3B8' } }
   };
 
-  // Row 1: Master Corporate Header Banner (Deep Imperial Navy)
+  // Row 1: Master Corporate Header Banner (Corporate Navy #002855)
   const titleRow1 = worksheet.addRow(['حوكمة جودة أعمال الإنشاءات • إدارة كهرباء الحدود الشمالية • المساندة الفنية']);
   worksheet.mergeCells(`A1:${lastColLetter}1`);
   titleRow1.height = 38;
   const cellA1 = worksheet.getCell('A1');
   cellA1.font = { name: 'Cairo', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-  cellA1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B132B' } };
+  cellA1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002855' } };
   cellA1.alignment = { vertical: 'middle', horizontal: 'center' };
 
   // Row 2: Subtitle
   const titleRow2 = worksheet.addRow([
-    `سجل تدقيق الجودة لاوامر العمل ( تقرير شامل ) | نطاق التقرير: ${officeTitle} | تاريخ الإصدار: ${new Date().toLocaleDateString('ar-SA')}`
+    `سجل تدقيق الجودة لاوامر العمل ( تقرير شامل + ملخص القوائم الـ 18 ) | نطاق التقرير: ${officeTitle} | نسبة المطابقة الفعلية: ${agg18.actualComplianceRate}% | تاريخ الإصدار: ${new Date().toLocaleDateString('ar-SA')}`
   ]);
   worksheet.mergeCells(`A2:${lastColLetter}2`);
   titleRow2.height = 26;
   const cellA2 = worksheet.getCell('A2');
-  cellA2.font = { name: 'Cairo', size: 10, bold: true, color: { argb: 'FF93C5FD' } };
-  cellA2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1C2541' } };
+  cellA2.font = { name: 'Cairo', size: 10, bold: true, color: { argb: 'FFFDB813' } };
+  cellA2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF004B8D' } };
   cellA2.alignment = { vertical: 'middle', horizontal: 'center' };
 
   // Row 3: Spacer row
@@ -1070,8 +1102,8 @@ export function buildExcelWorkbook(
   cardTopRowValues[cardSpans[0].start - 1] = '📦 إجمالي أوامر العمل';
   cardTopRowValues[cardSpans[1].start - 1] = '✅ مؤهل للاغلاق 155 (معتمد)';
   cardTopRowValues[cardSpans[2].start - 1] = '⚠️ معلق وبحاجة لملاحظات';
-  cardTopRowValues[cardSpans[3].start - 1] = '⚡ نسبة الجاهزية والامتثال';
-  cardTopRowValues[cardSpans[4].start - 1] = '✨ الصفوف المعدلة';
+  cardTopRowValues[cardSpans[3].start - 1] = '🛡️ امتثال القوائم الـ 18 (197 بند)';
+  cardTopRowValues[cardSpans[4].start - 1] = '⚡ نسبة المطابقة الفعلية الشاملة';
 
   const cardHeadersRow = worksheet.addRow(cardTopRowValues);
   cardHeadersRow.height = 20;
@@ -1090,15 +1122,15 @@ export function buildExcelWorkbook(
   styleCardTop(cardSpans[0].start, 'FF1E3A8A'); // Blue
   styleCardTop(cardSpans[1].start, 'FF065F46'); // Emerald
   styleCardTop(cardSpans[2].start, 'FF991B1B'); // Red
-  styleCardTop(cardSpans[3].start, 'FF3730A3'); // Indigo
-  styleCardTop(cardSpans[4].start, 'FF881337'); // Rose
+  styleCardTop(cardSpans[3].start, 'FF0F766E'); // Teal
+  styleCardTop(cardSpans[4].start, 'FF3730A3'); // Indigo
 
   const cardValRowValues = new Array(totalCols).fill('');
-  cardValRowValues[cardSpans[0].start - 1] = `${totalCount} أمر عمل`;
+  cardValRowValues[cardSpans[0].start - 1] = `${totalCount} أمر عمل (${editedCount} معدل)`;
   cardValRowValues[cardSpans[1].start - 1] = `${readyCount} أمر (${readyRate}%)`;
   cardValRowValues[cardSpans[2].start - 1] = `${pendingCount} أمر (${100 - readyRate}%)`;
-  cardValRowValues[cardSpans[3].start - 1] = `${readyRate}% نسبة معتمدة`;
-  cardValRowValues[cardSpans[4].start - 1] = `${editedCount} أمر معدل`;
+  cardValRowValues[cardSpans[3].start - 1] = `PDC: ${agg18.pdcComplianceRate}% | الإنشاءات: ${agg18.constComplianceRate}%`;
+  cardValRowValues[cardSpans[4].start - 1] = `${agg18.actualComplianceRate}% مطابقة فعلية`;
 
   const cardValuesRow = worksheet.addRow(cardValRowValues);
   cardValuesRow.height = 28;
@@ -1143,7 +1175,7 @@ export function buildExcelWorkbook(
 
   headerRow.eachCell((cell) => {
     cell.font = { name: 'Cairo', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF881337' } }; // Deep Royal Burgundy
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002855' } }; // Corporate Navy
     cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     cell.border = HEADER_BORDER;
   });
@@ -1175,6 +1207,23 @@ export function buildExcelWorkbook(
     const rowData: (string | number)[] = [idx + 1];
     activeCols.forEach(col => {
       let val = (wo as any)[col.key];
+      const fieldsFromAttachmentToEnd = new Set([
+        'attachmentStatus',
+        'photoDocumentation',
+        'consultantForms',
+        'consultantClearanceForms',
+        'form190',
+        'form200',
+        'inspectionForm',
+        'qualityNotes',
+        'pdcAudit',
+        'constructionAudit',
+        'procedure155Status',
+        'statusSyncTime',
+        'procedure155',
+        'procedureSyncTime'
+      ]);
+
       if (val === undefined || val === null || val === '') {
         if (wo.customFields && (wo.customFields as any)[col.key] !== undefined) {
           val = (wo.customFields as any)[col.key];
@@ -1183,24 +1232,18 @@ export function buildExcelWorkbook(
           val = files.length > 0 ? `${files.length} مرفق (SharePoint)` : 'SharePoint';
         } else if (col.key === 'receiptDate') {
           val = wo.createdAt ? String(wo.createdAt).slice(0, 10) : '-';
-        } else if (col.key === 'procedure155Status') {
-          val = 'مؤهل للاغلاق';
-        } else if (col.key === 'procedure155') {
-          val = 'مؤهل لأجراء 155';
-        } else if (col.key === 'attachmentStatus') {
-          val = 'غير جاهز للارفاق';
-        } else if (
-          col.key === 'photoDocumentation' ||
-          col.key === 'consultantForms' ||
-          col.key === 'consultantClearanceForms' ||
-          col.key === 'form190' ||
-          col.key === 'form200' ||
-          col.key === 'inspectionForm'
-        ) {
-          val = 'غير مكتمل';
+        } else if (fieldsFromAttachmentToEnd.has(col.key)) {
+          val = '';
         } else {
           val = '-';
         }
+      }
+
+      if (col.key === 'procedure155Status' && (val === 'قيد التدقيق' || val === 'غير محدد')) {
+        val = '';
+      }
+      if (col.key === 'qualityNotes' && (val === 'لا توجد ملاحظات حالياً' || val === 'لا توجد ملاحظات' || val === '-')) {
+        val = '';
       }
 
       if (col.key === 'statusSyncTime' || col.key === 'procedureSyncTime') {
@@ -1216,20 +1259,7 @@ export function buildExcelWorkbook(
 
       if (col.key === 'pdcAudit' || col.key === 'constructionAudit') {
         const rawAudit = (wo as any)[col.key];
-        if (rawAudit && typeof rawAudit === 'object') {
-          const overall = calculateOverallAuditColumnSummary(rawAudit);
-          const main =
-            overall.compliantCategories > 0 || overall.nonCompliantCategories > 0 || overall.naCategories > 0
-              ? overall.derivedMainStatus
-              : rawAudit.mainStatus && rawAudit.mainStatus !== 'غير محدد'
-              ? rawAudit.mainStatus
-              : 'قيد التدقيق';
-          val = `النتيجة: ${main} | الامتثال: ${overall.averageCompliance}% (ممتثل: ${overall.compliantCategories} • غير ممتثل: ${overall.nonCompliantCategories} • لا ينطبق: ${overall.naCategories})`;
-        } else if (typeof rawAudit === 'string' && rawAudit.trim()) {
-          val = rawAudit.trim();
-        } else {
-          val = '-';
-        }
+        val = formatOrderAudit18SummaryText(rawAudit).compactBadgeText;
       }
 
       rowData.push(String(val));
@@ -1239,26 +1269,25 @@ export function buildExcelWorkbook(
     const noteCharLen = String(notesVal || '').length;
     row.height = noteCharLen > 90 ? 54 : noteCharLen > 40 ? 38 : 26;
 
+    let customRowHex: string | undefined;
+    try {
+      if (typeof window !== 'undefined' && (workbook as any)._cachedColorsMap === undefined) {
+        const rawColors = localStorage.getItem('sec_custom_row_colors');
+        (workbook as any)._cachedColorsMap = rawColors ? JSON.parse(rawColors) : {};
+      }
+      const parsed = (workbook as any)._cachedColorsMap;
+      if (parsed && parsed[wo.id]) {
+        const clean = String(parsed[wo.id]).replace('#', '').toUpperCase();
+        if (clean.length === 6) customRowHex = 'FF' + clean;
+      }
+    } catch (_) {}
+
     row.eachCell((cell, colNumber) => {
       cell.border = THIN_BORDER;
 
       let fontColor = 'FF0F172A';
       let fontBold = true;
       let bgColor = isEven ? 'FFFFFFFF' : 'FFF8FAFC';
-
-      let customRowHex: string | undefined;
-      try {
-        if (typeof window !== 'undefined') {
-          const rawColors = localStorage.getItem('sec_custom_row_colors');
-          if (rawColors) {
-            const parsed = JSON.parse(rawColors);
-            if (parsed && parsed[wo.id]) {
-              const clean = parsed[wo.id].replace('#', '').toUpperCase();
-              if (clean.length === 6) customRowHex = 'FF' + clean;
-            }
-          }
-        }
-      } catch (_) {}
 
       if (customRowHex && !isEdited) {
         bgColor = customRowHex;
@@ -1451,6 +1480,102 @@ export function buildExcelWorkbook(
     }
   };
 
+  // Add dedicated second worksheet: ملخص امتثال القوائم الـ 18
+  const summarySheet = workbook.addWorksheet('ملخص امتثال القوائم الـ 18', {
+    views: [{ rightToLeft: true, state: 'frozen', ySplit: 4 }]
+  });
+
+  const sTitle1 = summarySheet.addRow(['ملخص الامتثال التفصيلي للقوائم الـ 18 المعتمدة (197 بند فحص فني) • تدقيق الـ PDC وتدقيق الإنشاءات']);
+  summarySheet.mergeCells('A1:K1');
+  sTitle1.height = 34;
+  const sCellA1 = summarySheet.getCell('A1');
+  sCellA1.font = { name: 'Cairo', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
+  sCellA1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002855' } };
+  sCellA1.alignment = { vertical: 'middle', horizontal: 'center' };
+
+  const sTitle2 = summarySheet.addRow([
+    `نطاق التقرير: ${officeTitle} | إجمالي أوامر العمل: ${totalCount} | امتثال القوائم الـ 18 (PDC): ${agg18.pdcComplianceRate}% | امتثال القوائم الـ 18 (الإنشاءات): ${agg18.constComplianceRate}% | نسبة المطابقة الفعلية الشاملة: ${agg18.actualComplianceRate}%`
+  ]);
+  summarySheet.mergeCells('A2:K2');
+  sTitle2.height = 24;
+  const sCellA2 = summarySheet.getCell('A2');
+  sCellA2.font = { name: 'Cairo', size: 10, bold: true, color: { argb: 'FFFDB813' } };
+  sCellA2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF004B8D' } };
+  sCellA2.alignment = { vertical: 'middle', horizontal: 'center' };
+
+  summarySheet.addRow([]);
+
+  const sHeader = summarySheet.addRow([
+    'م',
+    'اسم قائمة الفحص المعتمدة (18 قائمة)',
+    'عدد بنود القائمة',
+    'PDC - أوامر مقيمة',
+    'PDC - ممتثل',
+    'PDC - غير ممتثل',
+    'PDC - نسبة الامتثال %',
+    'الإنشاءات - أوامر مقيمة',
+    'الإنشاءات - ممتثل',
+    'الإنشاءات - غير ممتثل',
+    'الإنشاءات - نسبة الامتثال %'
+  ]);
+  sHeader.height = 30;
+  sHeader.eachCell(c => {
+    c.font = { name: 'Cairo', size: 10.5, bold: true, color: { argb: 'FFFFFFFF' } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002855' } };
+    c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    c.border = HEADER_BORDER;
+  });
+
+  agg18.categoriesBreakdown.forEach((catStat, idx) => {
+    const r = summarySheet.addRow([
+      idx + 1,
+      catStat.title,
+      `${catStat.itemCount} بند`,
+      catStat.pdcEvaluatedOrders,
+      catStat.pdcCompliantOrders,
+      catStat.pdcNonCompliantOrders,
+      `${catStat.pdcComplianceRate}%`,
+      catStat.constEvaluatedOrders,
+      catStat.constCompliantOrders,
+      catStat.constNonCompliantOrders,
+      `${catStat.constComplianceRate}%`
+    ]);
+    r.height = 24;
+    r.eachCell((c, colNum) => {
+      c.border = THIN_BORDER;
+      c.font = { name: 'Cairo', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+      c.alignment = { vertical: 'middle', horizontal: colNum === 2 ? 'right' : 'center' };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC' } };
+    });
+  });
+
+  const totalItems18 = AUDIT_CATEGORIES_META.reduce((acc, c) => acc + c.items.length, 0);
+  const sFooter = summarySheet.addRow([
+    'الإجمالي',
+    `إجمالي القوائم المعتمدة: ${AUDIT_CATEGORIES_META.length} قائمة فحص`,
+    `${totalItems18} بند`,
+    agg18.pdcEvaluatedOrders,
+    agg18.pdcQualifiedOrders,
+    agg18.pdcNonQualifiedOrders,
+    `${agg18.pdcComplianceRate}%`,
+    agg18.constEvaluatedOrders,
+    agg18.constQualifiedOrders,
+    agg18.constNonQualifiedOrders,
+    `${agg18.constComplianceRate}%`
+  ]);
+  sFooter.height = 28;
+  sFooter.eachCell(c => {
+    c.font = { name: 'Cairo', size: 10.5, bold: true, color: { argb: 'FF0F172A' } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+    c.alignment = { vertical: 'middle', horizontal: 'center' };
+    c.border = HEADER_BORDER;
+  });
+
+  const sWidths = [8, 32, 16, 18, 16, 16, 20, 18, 16, 16, 20];
+  sWidths.forEach((w, i) => {
+    summarySheet.getColumn(i + 1).width = w;
+  });
+
   return workbook;
 }
 
@@ -1537,7 +1662,7 @@ export async function exportWeeklyReportToExcel(
   worksheet.mergeCells('A1:K1');
   const c1 = worksheet.getCell('A1');
   c1.font = { name: 'Cairo', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-  c1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B132B' } };
+  c1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002855' } };
   c1.alignment = { vertical: 'middle', horizontal: 'center' };
   worksheet.getRow(1).height = 36;
 
@@ -1545,8 +1670,8 @@ export async function exportWeeklyReportToExcel(
   worksheet.addRow(['التقرير الأسبوعي التنفيذي لإنجازات المكاتب الفرعية وضبط الجودة الفنية (إجراء 155)']);
   worksheet.mergeCells('A2:K2');
   const c2 = worksheet.getCell('A2');
-  c2.font = { name: 'Cairo', size: 11, bold: true, color: { argb: 'FF34D399' } };
-  c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF064E3B' } };
+  c2.font = { name: 'Cairo', size: 11, bold: true, color: { argb: 'FFFDB813' } };
+  c2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF004B8D' } };
   c2.alignment = { vertical: 'middle', horizontal: 'center' };
   worksheet.getRow(2).height = 26;
 
@@ -1556,8 +1681,8 @@ export async function exportWeeklyReportToExcel(
   ]);
   worksheet.mergeCells('A3:K3');
   const c3 = worksheet.getCell('A3');
-  c3.font = { name: 'Cairo', size: 9.5, bold: true, color: { argb: 'FF93C5FD' } };
-  c3.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1C2541' } };
+  c3.font = { name: 'Cairo', size: 9.5, bold: true, color: { argb: 'FFFFFFFF' } };
+  c3.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0A192F' } };
   c3.alignment = { vertical: 'middle', horizontal: 'center' };
   worksheet.getRow(3).height = 22;
 
@@ -1565,14 +1690,14 @@ export async function exportWeeklyReportToExcel(
   worksheet.addRow([]);
   const sec1 = worksheet.addRow(['أولاً: الملخص التنفيذي ومؤشرات الأداء القيادية (KPI)']);
   worksheet.mergeCells(`A5:D5`);
-  sec1.font = { name: 'Cairo', size: 11, bold: true, color: { argb: 'FF881337' } };
+  sec1.font = { name: 'Cairo', size: 11, bold: true, color: { argb: 'FF002855' } };
 
   const kpiHeaders = worksheet.addRow(['المؤشر القيادي', 'القيمة الإجمالية', 'النسبة المئوية', 'الحالة التشغيلية']);
   kpiHeaders.height = 26;
   kpiHeaders.eachCell((c) => {
     c.font = { name: 'Cairo', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
-    c.border = THIN_BORDER;
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002855' } };
+    c.border = HEADER_BORDER;
     c.alignment = { vertical: 'middle', horizontal: 'center' };
   });
 
@@ -1580,8 +1705,8 @@ export async function exportWeeklyReportToExcel(
     ['إجمالي أوامر العمل المدققة', params.totalAudited, '100%', 'فحص ميداني شامل'],
     ['المؤهل والمعتمد لإجراء 155', params.readyCount, `${params.readyRate}%`, 'مستوفٍ للاشتراطات الفنية'],
     ['المعلق للنواقص والملاحظات', params.pendingCount, `${params.pendingRate}%`, 'بانتظار معالجة المقاولين'],
-    ['نسبة التوثيق الميداني بالصور', params.photoCount, `${params.photoRate}%`, 'صور التوثيق الفني (قبل، أثناء، بعد)'],
-    ['أوامر تتطلب تعديل المقايسة (BOQ)', params.boqCount, `${params.boqRate}%`, 'تحديث بنود المقايسة']
+    ['نسبة الإرفاق وملفات الصور الميدانية', params.photoCount, `${params.photoRate}%`, 'مرفقات الصور (SharePoint)'],
+    ['أوامر العمل المحتوية على ملاحظات جودة', params.boqCount, `${params.boqRate}%`, 'متابعة استيفاء ملاحظات الجودة']
   ];
 
   kpiData.forEach(row => {
@@ -1597,7 +1722,7 @@ export async function exportWeeklyReportToExcel(
   // Section 2: Office rankings
   worksheet.addRow([]);
   const sec2 = worksheet.addRow(['ثانياً: جدول تصنيف ومقارنة أداء المكاتب الفرعية']);
-  sec2.font = { name: 'Cairo', size: 11, bold: true, color: { argb: 'FF881337' } };
+  sec2.font = { name: 'Cairo', size: 11, bold: true, color: { argb: 'FF002855' } };
 
   const officeTableHeaders = [
     'الترتيب',
@@ -1607,8 +1732,8 @@ export async function exportWeeklyReportToExcel(
     'مؤهل 155',
     'نواقص/معلق',
     'نسبة الإنجاز',
-    'التوثيق بالصور',
-    'تعديل المقايسة',
+    'الإرفاق والصور',
+    'ملاحظات الجودة',
     'تقييم الجودة',
     'التقييم الإداري'
   ];
@@ -1617,8 +1742,8 @@ export async function exportWeeklyReportToExcel(
   offHeadersRow.height = 28;
   offHeadersRow.eachCell(c => {
     c.font = { name: 'Cairo', size: 10.5, bold: true, color: { argb: 'FFFFFFFF' } };
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF881337' } };
-    c.border = THIN_BORDER;
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002855' } };
+    c.border = HEADER_BORDER;
     c.alignment = { vertical: 'middle', horizontal: 'center' };
   });
 
@@ -1721,7 +1846,7 @@ export function buildPptxPresentation(
 
   // Slide 1: Prestigious Executive Cover Slide
   const coverSlide = pptx.addSlide();
-  coverSlide.background = { color: '0A192F' }; // Deep corporate navy
+  coverSlide.background = { color: '002855' }; // Deep corporate navy
 
   // Accent Line at Top
   coverSlide.addShape(pptx.ShapeType.rect, {
@@ -1729,7 +1854,7 @@ export function buildPptxPresentation(
     y: 0,
     w: 13.33,
     h: 0.12,
-    fill: { color: '10B981' }
+    fill: { color: 'F58220' }
   });
 
   // Main Header Block
@@ -1739,7 +1864,7 @@ export function buildPptxPresentation(
     w: 11.73,
     h: 0.35,
     fontSize: 14,
-    color: '94A3B8',
+    color: 'BFDBFE',
     align: 'center'
   });
 
@@ -1749,7 +1874,7 @@ export function buildPptxPresentation(
     w: 11.73,
     h: 0.75,
     fontSize: 28,
-    color: '34D399',
+    color: 'FDB813',
     bold: true,
     align: 'center'
   });
@@ -1902,13 +2027,13 @@ export function buildPptxPresentation(
       align: 'left'
     });
 
-    // Emerald accent bar
+    // Amber accent bar
     slide.addShape(pptx.ShapeType.rect, {
       x: 0.415,
       y: 0.63,
       w: 12.50,
-      h: 0.025,
-      fill: { color: '10B981' }
+      h: 0.03,
+      fill: { color: 'F58220' }
     });
 
     // Dynamic Vertical Sizing Budget:
@@ -1942,23 +2067,23 @@ export function buildPptxPresentation(
       dynamicCellMargin = 0.06;
     }
 
-    // Exact 14 canonical Arabic table headers (+ # sequence column)
+    // Exact 14 canonical Arabic table headers (+ # sequence column) with Corporate Navy (#002855)
     const tableHeader = [
-      { text: '#', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'المكتب', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'المقاول', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'الاستشاري', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'رقم امر العمل', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'نوع امر العمل', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'ملف الصور', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'حالة الارفاق', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'الملاحظات', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'تدقيق PDC', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'تدقيق الانشاءات', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'تدقيق المساندة الفنية', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'مزامنة التدقيق', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'حالة إجراء 155', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
-      { text: 'مزامنة إجراء 155', options: { bold: true, fill: { color: '881337' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } }
+      { text: '#', options: { bold: true, fill: { color: '002855' }, color: 'FDB813', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'المكتب', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'المقاول', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'الاستشاري', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'رقم امر العمل', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'نوع امر العمل', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'ملف الصور', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'حالة الارفاق', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'الملاحظات', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'تدقيق PDC', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'تدقيق الانشاءات', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'تدقيق المساندة الفنية', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'مزامنة التدقيق', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'حالة إجراء 155', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } },
+      { text: 'مزامنة إجراء 155', options: { bold: true, fill: { color: '002855' }, color: 'FFFFFF', align: 'center' as const, fontSize: dynamicHeaderFontSize } }
     ];
 
     const tableRows = chunk.map((wo, idx) => {
@@ -1968,28 +2093,29 @@ export function buildPptxPresentation(
       const bgColor = isEdited ? 'FEE2E2' : isEven ? 'FFFFFF' : 'F8FAFC';
       const textColor = isEdited ? '991B1B' : '0F172A';
       
-      const cleanNote = (wo.qualityNotes || wo.executionNotes || '-').trim();
-      const hasNote = cleanNote !== '-' && cleanNote !== '';
+      const cleanNote = (wo.qualityNotes || wo.executionNotes || '').trim();
+      const hasNote = cleanNote !== '-' && cleanNote !== '' && cleanNote !== 'لا توجد ملاحظات حالياً' && cleanNote !== 'لا توجد ملاحظات';
 
       const files = Array.isArray((wo as any).photosFile) ? (wo as any).photosFile : [];
       const photosLabel = files.length > 0 ? `${files.length} مرفق` : 'SharePoint';
-      const attachStatus = wo.attachmentStatus || 'غير جاهز للارفاق';
+      const attachStatus = (wo.attachmentStatus || '').trim();
       const isAttachComplete = attachStatus === 'مكتمل' || attachStatus === 'جاهز للارفاق الكامل';
 
-      const pdcMain = (wo as any).pdcAudit?.mainStatus && (wo as any).pdcAudit.mainStatus !== 'غير محدد' ? (wo as any).pdcAudit.mainStatus : 'قيد التدقيق';
+      const pdcMain = formatOrderAudit18SummaryText((wo as any).pdcAudit).mainStatus;
       const isPdcQual = pdcMain.includes('مؤهل') && !pdcMain.includes('غير');
 
-      const constMain = (wo as any).constructionAudit?.mainStatus && (wo as any).constructionAudit.mainStatus !== 'غير محدد' ? (wo as any).constructionAudit.mainStatus : 'قيد التدقيق';
+      const constMain = formatOrderAudit18SummaryText((wo as any).constructionAudit).mainStatus;
       const isConstQual = constMain.includes('مؤهل') && !constMain.includes('غير');
 
-      const statusVal = String(wo.procedure155Status || 'مؤهل للاغلاق');
+      const rawStatusVal = String(wo.procedure155Status || '').trim();
+      const statusVal = rawStatusVal === 'قيد التدقيق' || rawStatusVal === 'غير محدد' ? '' : rawStatusVal;
       const is155Qualified = statusVal.includes('مؤهل') && !statusVal.includes('غير');
 
-      const procVal = String(wo.procedure155 || 'مؤهل لأجراء 155');
+      const procVal = String(wo.procedure155 || '').trim();
       const isProcQual = procVal.includes('مؤهل') && !procVal.includes('غير');
 
-      const statusSyncVal = wo.statusSyncTime ? String(wo.statusSyncTime).split('|')[0]?.trim() : '-';
-      const procSyncVal = wo.procedureSyncTime ? String(wo.procedureSyncTime).split('|')[0]?.trim() : '-';
+      const statusSyncVal = wo.statusSyncTime ? String(wo.statusSyncTime).split('|')[0]?.trim() : '';
+      const procSyncVal = wo.procedureSyncTime ? String(wo.procedureSyncTime).split('|')[0]?.trim() : '';
 
       return [
         { text: isEdited ? `${globalIdx} (مُعدّل)` : String(globalIdx), options: { fill: { color: bgColor }, color: isEdited ? '991B1B' : '475569', fontSize: dynamicFontSize, align: 'center' as const, bold: true } },
@@ -1999,13 +2125,13 @@ export function buildPptxPresentation(
         { text: wo.workOrderNumber || '-', options: { fill: { color: bgColor }, color: isEdited ? '991B1B' : '1E40AF', fontSize: dynamicFontSize, align: 'center' as const, bold: true } },
         { text: wo.workOrderCode || '-', options: { fill: { color: bgColor }, color: textColor, fontSize: dynamicFontSize, align: 'center' as const } },
         { text: photosLabel, options: { fill: { color: bgColor }, color: '065F46', fontSize: dynamicFontSize, align: 'center' as const, bold: true } },
-        { text: attachStatus, options: { fill: { color: isAttachComplete ? 'D1FAE5' : 'FEE2E2' }, color: isAttachComplete ? '065F46' : '991B1B', fontSize: dynamicFontSize, bold: true, align: 'center' as const } },
-        { text: cleanNote, options: { fill: { color: hasNote ? 'FFF1F2' : bgColor }, color: hasNote ? 'B91C1C' : '64748B', fontSize: dynamicNotesFontSize, align: 'right' as const, bold: hasNote } },
-        { text: pdcMain, options: { fill: { color: isPdcQual ? 'D1FAE5' : 'FEF3C7' }, color: isPdcQual ? '065F46' : '92400E', fontSize: dynamicFontSize, bold: true, align: 'center' as const } },
-        { text: constMain, options: { fill: { color: isConstQual ? 'D1FAE5' : 'FEF3C7' }, color: isConstQual ? '065F46' : '92400E', fontSize: dynamicFontSize, bold: true, align: 'center' as const } },
-        { text: statusVal, options: { fill: { color: is155Qualified ? 'D1FAE5' : 'FEE2E2' }, color: is155Qualified ? '065F46' : '991B1B', fontSize: dynamicFontSize, bold: true, align: 'center' as const } },
+        { text: attachStatus, options: { fill: { color: !attachStatus ? bgColor : isAttachComplete ? 'D1FAE5' : 'FEE2E2' }, color: !attachStatus ? textColor : isAttachComplete ? '065F46' : '991B1B', fontSize: dynamicFontSize, bold: true, align: 'center' as const } },
+        { text: hasNote ? cleanNote : '', options: { fill: { color: hasNote ? 'FFF1F2' : bgColor }, color: hasNote ? 'B91C1C' : '64748B', fontSize: dynamicNotesFontSize, align: 'right' as const, bold: hasNote } },
+        { text: pdcMain, options: { fill: { color: !pdcMain ? bgColor : isPdcQual ? 'D1FAE5' : 'FEF3C7' }, color: !pdcMain ? textColor : isPdcQual ? '065F46' : '92400E', fontSize: dynamicFontSize, bold: true, align: 'center' as const } },
+        { text: constMain, options: { fill: { color: !constMain ? bgColor : isConstQual ? 'D1FAE5' : 'FEF3C7' }, color: !constMain ? textColor : isConstQual ? '065F46' : '92400E', fontSize: dynamicFontSize, bold: true, align: 'center' as const } },
+        { text: statusVal, options: { fill: { color: !statusVal ? bgColor : is155Qualified ? 'D1FAE5' : 'FEE2E2' }, color: !statusVal ? textColor : is155Qualified ? '065F46' : '991B1B', fontSize: dynamicFontSize, bold: true, align: 'center' as const } },
         { text: statusSyncVal, options: { fill: { color: bgColor }, color: '334155', fontSize: dynamicFontSize * 0.9, align: 'center' as const } },
-        { text: procVal, options: { fill: { color: isProcQual ? 'DBEAFE' : 'FEE2E2' }, color: isProcQual ? '1E40AF' : '991B1B', fontSize: dynamicFontSize, bold: true, align: 'center' as const } },
+        { text: procVal, options: { fill: { color: !procVal ? bgColor : isProcQual ? 'DBEAFE' : 'FEE2E2' }, color: !procVal ? textColor : isProcQual ? '1E40AF' : '991B1B', fontSize: dynamicFontSize, bold: true, align: 'center' as const } },
         { text: procSyncVal, options: { fill: { color: bgColor }, color: '334155', fontSize: dynamicFontSize * 0.9, align: 'center' as const } }
       ];
     });
@@ -2090,41 +2216,44 @@ export function exportToCsv(
         val = files.length > 0 ? `${files.length} مرفق (SharePoint)` : 'SharePoint';
       } else if (col.key === 'pdcAudit' || col.key === 'constructionAudit') {
         const rawAudit = (wo as any)[col.key];
-        if (rawAudit && typeof rawAudit === 'object') {
-          const overall = calculateOverallAuditColumnSummary(rawAudit);
-          const main =
-            overall.compliantCategories > 0 || overall.nonCompliantCategories > 0 || overall.naCategories > 0
-              ? overall.derivedMainStatus
-              : rawAudit.mainStatus && rawAudit.mainStatus !== 'غير محدد'
-              ? rawAudit.mainStatus
-              : 'قيد التدقيق';
-          val = `${main} (امتثال: ${overall.averageCompliance}% | ممتثل: ${overall.compliantCategories} | غير ممتثل: ${overall.nonCompliantCategories} | لا ينطبق: ${overall.naCategories})`;
-        } else if (typeof rawAudit === 'string' && rawAudit.trim()) {
-          val = rawAudit.trim();
-        } else {
-          val = 'قيد التدقيق';
-        }
+        val = formatOrderAudit18SummaryText(rawAudit).compactBadgeText;
       } else if (val === undefined || val === null || val === '') {
         if (wo.customFields && (wo.customFields as any)[col.key] !== undefined) {
           val = (wo.customFields as any)[col.key];
-        } else if (col.key === 'procedure155Status') {
-          val = 'مؤهل للاغلاق';
-        } else if (col.key === 'procedure155') {
-          val = 'مؤهل لأجراء 155';
-        } else if (col.key === 'attachmentStatus') {
-          val = 'غير جاهز للارفاق';
         } else {
-          val = '-';
+          val = '';
         }
+      }
+      if (col.key === 'procedure155Status' && (val === 'قيد التدقيق' || val === 'غير محدد')) {
+        val = '';
       }
       rowVals.push(val);
     });
     return rowVals;
   });
 
+  const agg18 = calculateAggregate18ChecklistsCompliance(orders);
+  const summaryRows: any[][] = [
+    [],
+    ['ملخص الامتثال للقوائم الـ 18 ونسبة المطابقة الفعلية', `نطاق التقرير: ${officeTitle}`, `إجمالي الأوامر: ${orders.length}`, `نسبة المطابقة الفعلية الشاملة: ${agg18.actualComplianceRate}%`, `امتثال القوائم الـ 18 (PDC): ${agg18.pdcComplianceRate}%`, `امتثال القوائم الـ 18 (الإنشاءات): ${agg18.constComplianceRate}%`, `جاهزية 155: ${agg18.ready155Rate}%`],
+    ['رقم القائمة', 'اسم القائمة (18 قائمة)', 'عدد البنود (197 بند)', 'PDC مقيم', 'PDC ممتثل', 'PDC نسبة الامتثال', 'الإنشاءات مقيم', 'الإنشاءات ممتثل', 'الإنشاءات نسبة الامتثال'],
+    ...agg18.categoriesBreakdown.map((c, idx) => [
+      idx + 1,
+      c.title,
+      `${c.itemCount} بند`,
+      c.pdcEvaluatedOrders,
+      c.pdcCompliantOrders,
+      `${c.pdcComplianceRate}%`,
+      c.constEvaluatedOrders,
+      c.constCompliantOrders,
+      `${c.constComplianceRate}%`
+    ])
+  ];
+
   const csvContent = '\uFEFF' + [
     headers.map(escapeCsv).join(','),
-    ...rows.map(row => row.map(escapeCsv).join(','))
+    ...rows.map(row => row.map(escapeCsv).join(',')),
+    ...summaryRows.map(row => row.map(escapeCsv).join(','))
   ].join('\r\n');
 
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });

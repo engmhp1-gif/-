@@ -1,31 +1,32 @@
-import { initializeApp, getApps, getApp, setLogLevel } from 'firebase/app';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json' with { type: 'json' };
-
-// Suppress internal gRPC idle stream disconnect debug warnings
-try {
-  setLogLevel('silent');
-} catch (_) {}
-
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// High-Capacity Native Cloud Vault Mode (SEC_CLOUD_VAULT_V3 + IndexedDB)
+// Firebase Firestore network calls are permanently disabled to prevent daily read/write quota exhaustion and UI lag.
+export const db = null as any;
 export const auth = {
   currentUser: null
 } as any;
 
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
-    }
-  }
+let firestoreQuotaExhausted = true;
+
+export function isFirestoreQuotaExhausted(): boolean {
+  return firestoreQuotaExhausted;
 }
-if (typeof window !== 'undefined') {
-  testConnection();
+
+export function isFirestoreQuotaError(error: unknown): boolean {
+  const msg = (error instanceof Error ? error.message : String(error || '')).toLowerCase();
+  const code = String((error as any)?.code || '').toLowerCase();
+  return (
+    code.includes('resource-exhausted') ||
+    msg.includes('quota limit exceeded') ||
+    msg.includes('quota exceeded') ||
+    msg.includes('free daily read units') ||
+    msg.includes('resource_exhausted')
+  );
 }
+
+export function markFirestoreQuotaExhausted(_cooldownMs = 60 * 60 * 1000): void {
+  firestoreQuotaExhausted = true;
+}
+
 
 export const OperationType = {
   CREATE: 'create',
@@ -47,7 +48,7 @@ export interface FirestoreErrorInfo {
     email?: string | null;
     emailVerified?: boolean | null;
     isAnonymous?: boolean | null;
-    tenantId?: string | null;
+    tenantId?: boolean | string | null;
     providerInfo?: {
       providerId?: string | null;
       email?: string | null;
@@ -56,6 +57,10 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const isQuota = isFirestoreQuotaError(error);
+  if (isQuota) {
+    markFirestoreQuotaExhausted();
+  }
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -73,6 +78,10 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  if (!isQuota) {
+    console.warn('Firestore Notice: ', JSON.stringify(errInfo));
+  }
   throw new Error(JSON.stringify(errInfo));
 }
+
+

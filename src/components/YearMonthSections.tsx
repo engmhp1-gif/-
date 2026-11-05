@@ -172,8 +172,8 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
       if (isQual) contractorCounts[c].qualified++;
       else contractorCounts[c].unqualified++;
 
-      // Execution status
-      const es = o.executionStatus || 'قيد التدقيق';
+      // Procedure 155 status
+      const es = o.procedure155Status || 'قيد التدقيق';
       statusCounts[es] = (statusCounts[es] || 0) + 1;
     });
 
@@ -244,13 +244,13 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5 mb-6 text-right">
+    <div className="bg-white rounded-2xl border-2 border-[#002855]/15 shadow-sm overflow-hidden mb-6 text-right font-['Cairo',sans-serif]">
       
-      {/* Top Bar: Years Tabs & Modes */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-4 border-b border-slate-100">
+      {/* Top Corporate Bar: Years Tabs & Modes */}
+      <div className="p-4 sm:p-5 bg-gradient-to-l from-[#001D40] via-[#002855] to-[#004B8D] border-b-2 border-[#F58220] text-white flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-900 rounded-xl font-bold text-xs">
-            <Calendar className="w-4 h-4 text-blue-600" />
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white/15 text-[#FDB813] border border-white/20 rounded-xl font-black text-xs">
+            <Calendar className="w-4 h-4 text-[#FDB813]" />
             <span>السنة المالية / التنفيذية:</span>
           </div>
 
@@ -259,10 +259,10 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
               key={year}
               type="button"
               onClick={() => onSelectPeriod(year, activeMonth)}
-              className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-xl font-black text-xs transition-all cursor-pointer ${
                 activeYear === year
-                  ? 'bg-blue-600 text-white shadow-xs scale-105'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  ? 'bg-[#F58220] text-white shadow-sm scale-105'
+                  : 'bg-white/10 text-blue-100 hover:bg-white/20 border border-white/15'
               }`}
             >
               {year}
@@ -273,27 +273,27 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
             <button
               type="button"
               onClick={onOpenYearMonthPicker}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-l from-indigo-700 to-blue-700 hover:from-indigo-600 hover:to-blue-600 text-white font-black text-xs shadow-xs transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-xs transition-all cursor-pointer border border-emerald-400/40"
               title="تحديد السنة والشهر لإدراج الجداول المستقلة"
             >
-              <CalendarPlus className="w-3.5 h-3.5 text-amber-300" />
+              <CalendarPlus className="w-3.5 h-3.5 text-[#FDB813]" />
               <span>تحديد السنة والشهر وإدراج جدول</span>
             </button>
           )}
         </div>
 
         {/* Period Mode Selector */}
-        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl flex-wrap">
+        <div className="flex items-center gap-1.5 bg-white/10 p-1 rounded-xl border border-white/15 flex-wrap">
           <button
             type="button"
             onClick={() => {
               setPeriodMode('single_month');
               if (activeMonth === 'all') onSelectPeriod(activeYear, 1);
             }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
               periodMode === 'single_month'
-                ? 'bg-white text-blue-700 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+                ? 'bg-[#F58220] text-white shadow-xs'
+                : 'text-blue-100 hover:bg-white/10'
             }`}
           >
             الأقسام الشهرية
@@ -302,10 +302,10 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
           <button
             type="button"
             onClick={() => setPeriodMode('quarter')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
               periodMode === 'quarter'
-                ? 'bg-white text-blue-700 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+                ? 'bg-[#F58220] text-white shadow-xs'
+                : 'text-blue-100 hover:bg-white/10'
             }`}
           >
             ربع سنوي
@@ -314,10 +314,10 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
           <button
             type="button"
             onClick={() => setPeriodMode('semi_annual')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
               periodMode === 'semi_annual'
-                ? 'bg-white text-blue-700 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+                ? 'bg-[#F58220] text-white shadow-xs'
+                : 'text-blue-100 hover:bg-white/10'
             }`}
           >
             نصف سنوي
@@ -326,10 +326,10 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
           <button
             type="button"
             onClick={() => setPeriodMode('annual')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
               periodMode === 'annual'
-                ? 'bg-white text-blue-700 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+                ? 'bg-[#F58220] text-white shadow-xs'
+                : 'text-blue-100 hover:bg-white/10'
             }`}
           >
             تقرير سنوي
@@ -338,31 +338,32 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
           <button
             type="button"
             onClick={() => setIsArchiveModalOpen(true)}
-            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-lg text-xs font-black bg-[#FDB813] text-slate-950 hover:bg-amber-400 flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
             title="عرض التقارير الإحصائية السابقة المحفوظة"
           >
-            <Archive className="w-3.5 h-3.5 text-amber-600" />
+            <Archive className="w-3.5 h-3.5 text-slate-950" />
             <span>الأرشيف المحفوظ ({archivedReports.length})</span>
           </button>
         </div>
       </div>
 
+      <div className="p-4 sm:p-5">
       {/* Sub-bar for Period Options */}
       {periodMode === 'single_month' && (
-        <div className="pt-3 pb-2 overflow-x-auto scrollbar-none">
+        <div className="pb-2 overflow-x-auto scrollbar-none">
           <div className="flex items-center gap-1.5 min-w-max">
             <button
               type="button"
               onClick={() => onSelectPeriod(activeYear, 'all')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeMonth === 'all'
-                  ? 'bg-slate-900 text-white shadow-xs'
+                  ? 'bg-[#002855] text-white shadow-xs border border-[#F58220]'
                   : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
               }`}
             >
-              <Layers className="w-3.5 h-3.5" />
+              <Layers className="w-3.5 h-3.5 text-[#F58220]" />
               <span>كافة الشهور</span>
-              <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-slate-700 text-slate-200">
+              <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-[#F58220] text-white font-mono">
                 {orders.length}
               </span>
             </button>
@@ -375,15 +376,15 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
                   key={m.num}
                   type="button"
                   onClick={() => onSelectPeriod(activeYear, m.num)}
-                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  className={`px-3 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
                     isActive
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20 scale-102'
+                      ? 'bg-[#004B8D] text-white shadow-md border border-[#F58220] scale-102'
                       : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
                   }`}
                 >
                   <span>{m.name}</span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-                    isActive ? 'bg-blue-800 text-blue-100' : 'bg-slate-200 text-slate-700'
+                    isActive ? 'bg-[#002855] text-[#FDB813]' : 'bg-slate-200 text-slate-700'
                   }`}>
                     {count}
                   </span>
@@ -395,7 +396,7 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
       )}
 
       {periodMode === 'quarter' && (
-        <div className="pt-3 pb-2 flex items-center gap-2 flex-wrap">
+        <div className="pt-2 pb-2 flex items-center gap-2 flex-wrap">
           {[
             { q: 1, label: 'الربع الأول (يناير - مارس)' },
             { q: 2, label: 'الربع الثاني (أبريل - يونيو)' },
@@ -406,9 +407,9 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
               key={item.q}
               type="button"
               onClick={() => setSelectedQuarter(item.q)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
                 selectedQuarter === item.q
-                  ? 'bg-blue-600 text-white shadow-xs'
+                  ? 'bg-[#004B8D] text-white shadow-xs border border-[#F58220]'
                   : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
               }`}
             >
@@ -419,13 +420,13 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
       )}
 
       {periodMode === 'semi_annual' && (
-        <div className="pt-3 pb-2 flex items-center gap-2 flex-wrap">
+        <div className="pt-2 pb-2 flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={() => setSelectedHalf(1)}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
               selectedHalf === 1
-                ? 'bg-blue-600 text-white shadow-xs'
+                ? 'bg-[#004B8D] text-white shadow-xs border border-[#F58220]'
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
@@ -434,9 +435,9 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
           <button
             type="button"
             onClick={() => setSelectedHalf(2)}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
               selectedHalf === 2
-                ? 'bg-blue-600 text-white shadow-xs'
+                ? 'bg-[#004B8D] text-white shadow-xs border border-[#F58220]'
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
@@ -446,16 +447,16 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
       )}
 
       {/* Live Statistics & KPI Dashboard Banner for the Open Month / Period */}
-      <div className="mt-4 p-4 rounded-xl bg-gradient-to-l from-slate-900 to-slate-800 text-white shadow-inner">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 pb-3 border-b border-slate-700">
+      <div className="mt-4 p-4 rounded-xl bg-gradient-to-l from-[#001D40] via-[#002855] to-[#003B73] border border-[#004B8D] text-white shadow-inner">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 pb-3 border-b border-white/15">
           <div>
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <h3 className="text-sm sm:text-base font-bold text-white">
+              <h3 className="text-sm sm:text-base font-black text-white">
                 الإحصائيات و KPI التلقائية • {periodLabel}
               </h3>
             </div>
-            <p className="text-xs text-slate-300 mt-0.5">
+            <p className="text-xs text-blue-100 mt-0.5">
               نتائج فورية محسوبة تلقائياً لأوامر العمل والملفات المندرجة في هذه الفترة
             </p>
           </div>
@@ -466,10 +467,10 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
               <button
                 type="button"
                 onClick={handleSaveToArchive}
-                className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                className="px-3 py-1.5 rounded-lg bg-[#F58220] hover:bg-[#d96b12] text-white font-black text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                 title="حفظ لقطة التقرير في الأرشيف حتى لو تم مسح الجدول لاحقاً"
               >
-                <Archive className="w-3.5 h-3.5 text-slate-950" />
+                <Archive className="w-3.5 h-3.5 text-white" />
                 <span>حفظ في الأرشيف الدائم</span>
               </button>
             )}
@@ -630,6 +631,7 @@ export const YearMonthSections: React.FC<YearMonthSectionsProps> = ({
           </div>
         </div>
       )}
+      </div>
 
     </div>
   );

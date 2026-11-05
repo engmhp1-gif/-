@@ -11,471 +11,445 @@ import {
   RotateCcw,
   Save,
   FileCheck2,
-  Search,
-  CheckCheck,
-  Building2,
-  Zap,
-  Cpu,
+  FileText,
+  FileSpreadsheet,
   Layers,
-  Anchor,
-  Cable,
-  PlugZap,
-  GitCommitHorizontal,
-  Shield,
-  RadioTower,
-  SlidersHorizontal
+  CheckCheck,
+  Zap,
+  Award,
+  Clock,
+  UserCheck,
+  Sparkles,
+  BookOpen,
+  Link2
 } from 'lucide-react';
 import {
   WorkOrder,
-  WorkOrderAuditColumnData,
-  AuditItemOption,
-  AuditSectionCategoryData
+  WorkOrderAuditColumnData
 } from '../types';
 import {
-  AUDIT_CATEGORIES_META,
   AuditCategoryKey,
-  calculateCategoryAuditStatus,
-  calculateOverallAuditColumnSummary,
-  createEmptyAuditColumnData
+  createEmptyAuditColumnData,
+  sync18CategoriesFromPrimarySupportChecklist
 } from '../data/auditChecklistData';
+import {
+  TECHNICAL_SUPPORT_CHECKLIST_ITEMS,
+  SupportChecklistFieldKey,
+  SupportChecklistValue,
+  SupportChecklistItemMeta,
+  extractColumnSupportChecklistMap,
+  getEvaluatedColumnSupportChecklistKeys,
+  calculateSupportChecklistStats,
+  AuditStagesReferenceModal,
+  renderAuditCategoryIcon
+} from './TechnicalSupportAuditModal';
+
+export { renderAuditCategoryIcon, AuditStagesReferenceModal };
 
 interface AuditChecklistModalProps {
   order: WorkOrder;
   columnField: 'pdcAudit' | 'constructionAudit';
   columnTitle: string;
   initialCategoryKey?: AuditCategoryKey | null;
+  initialFocusField?: SupportChecklistFieldKey | null;
+  initialOpenStages?: boolean;
   isOpen: boolean;
   onClose: () => void;
   onSave: (updatedData: WorkOrderAuditColumnData, shouldClose?: boolean) => Promise<void> | void;
   canEdit?: boolean;
 }
 
-export function renderAuditCategoryIcon(iconType: string, className = 'w-4 h-4 shrink-0') {
-  switch (iconType) {
-    case 'stationRoom':
-      return <Building2 className={className} />;
-    case 'hvSwitchgear':
-      return <Zap className={className} />;
-    case 'transformerSubstation':
-      return <Cpu className={className} />;
-    case 'lvPanel':
-      return <SlidersHorizontal className={className} />;
-    case 'subDistributionPanel':
-      return <Layers className={className} />;
-    case 'stationFoundations':
-      return <Boxes className={className} />;
-    case 'enclosures':
-      return <Shield className={className} />;
-    case 'protectionBollards':
-      return <ShieldCheck className={className} />;
-    case 'stationEarthing':
-      return <Anchor className={className} />;
-    case 'boxesAndMeters':
-      return <Gauge className={className} />;
-    case 'overheadPoles':
-      return <RadioTower className={className} />;
-    case 'conductors':
-      return <Cable className={className} />;
-    case 'stayWire':
-      return <GitCommitHorizontal className={className} />;
-    case 'riserCables':
-      return <PlugZap className={className} />;
-    case 'overheadEquipment':
-      return <Zap className={className} />;
-    case 'excavations':
-      return <Pickaxe className={className} />;
-    case 'joints':
-      return <GitCommitHorizontal className={className} />;
-    case 'terminations':
-    default:
-      return <PlugZap className={className} />;
-  }
-}
-
 export const AuditChecklistModal: React.FC<AuditChecklistModalProps> = ({
   order,
   columnField,
   columnTitle,
-  initialCategoryKey,
+  initialCategoryKey = null,
+  initialFocusField = null,
+  initialOpenStages = false,
   isOpen,
   onClose,
   onSave,
   canEdit = true
 }) => {
-  // Initialize column data safely with all 18 official categories
-  const initialAuditData: WorkOrderAuditColumnData = useMemo(() => {
-    const raw = order[columnField] as WorkOrderAuditColumnData | string | undefined;
-    const base = createEmptyAuditColumnData();
-    if (!raw) return base;
-    if (typeof raw === 'string') {
-      const trimmed = raw.trim();
-      return {
-        ...base,
-        mainStatus: trimmed === 'مؤهل' || trimmed === 'غير مؤهل' ? trimmed : 'غير محدد'
-      };
-    }
-    if (typeof raw !== 'object' || Array.isArray(raw)) return base;
-
-    const cleanedRaw: WorkOrderAuditColumnData = {};
-    for (const [k, v] of Object.entries(raw)) {
-      if (!/^\d+$/.test(k)) {
-        cleanedRaw[k] = v;
-      }
-    }
-
-    const merged: WorkOrderAuditColumnData = {
-      ...base,
-      ...cleanedRaw,
-      mainStatus: cleanedRaw.mainStatus || 'غير محدد'
-    };
-
-    for (const cat of AUDIT_CATEGORIES_META) {
-      const catRaw = cleanedRaw[cat.key] as AuditSectionCategoryData | undefined;
-      const calc = calculateCategoryAuditStatus(catRaw, cat.items.length);
-      merged[cat.key] = {
-        items: { ...(catRaw?.items || {}) },
-        notes: catRaw?.notes || '',
-        evaluatedAt: catRaw?.evaluatedAt,
-        evaluatedBy: catRaw?.evaluatedBy,
-        status: calc.status,
-        compliancePercentage: calc.compliancePercentage
-      };
-    }
-
-    return merged;
-  }, [order, columnField]);
-
-  const [activeCategory, setActiveCategory] = useState<AuditCategoryKey>(
-    initialCategoryKey || AUDIT_CATEGORIES_META[0].key
+  const [checklistValues, setChecklistValues] = useState<Record<SupportChecklistFieldKey, SupportChecklistValue>>(
+    () => extractColumnSupportChecklistMap(order, columnField)
   );
-  const [columnData, setColumnData] = useState<WorkOrderAuditColumnData>(initialAuditData);
-  const [searchQuery, setSearchQuery] = useState('');
+
+  const [evaluatedKeys, setEvaluatedKeys] = useState<string[]>(() => {
+    const initMap = extractColumnSupportChecklistMap(order, columnField);
+    return getEvaluatedColumnSupportChecklistKeys(order, columnField, initMap);
+  });
+
+  const [itemUpdatedAt, setItemUpdatedAt] = useState<Record<string, string>>(() => {
+    const colData = order[columnField] as WorkOrderAuditColumnData | undefined;
+    return { ...(colData?.itemUpdatedAt || {}) };
+  });
+
+  const [mainStatus, setMainStatus] = useState<'مؤهل' | 'غير مؤهل' | 'قيد التدقيق' | 'غير محدد' | ''>(() => {
+    const initMap = extractColumnSupportChecklistMap(order, columnField);
+    const initEval = getEvaluatedColumnSupportChecklistKeys(order, columnField, initMap);
+    if (initEval.length > 0) {
+      const initStats = calculateSupportChecklistStats(initMap, initEval);
+      return initStats.isAllApplicableCompleted ? 'مؤهل' : 'غير مؤهل';
+    }
+    return '';
+  });
+
+  const [highlightedKey, setHighlightedKey] = useState<SupportChecklistFieldKey | null>(initialFocusField);
   const [isSaving, setIsSaving] = useState(false);
+  const [isStagesModalOpen, setIsStagesModalOpen] = useState<boolean>(
+    Boolean(initialOpenStages || initialCategoryKey)
+  );
   const sessionKeyRef = React.useRef<string | null>(null);
+  const localValuesRef = React.useRef(checklistValues);
+  const localEvalRef = React.useRef(evaluatedKeys);
+  const localTimesRef = React.useRef(itemUpdatedAt);
+  localValuesRef.current = checklistValues;
+  localEvalRef.current = evaluatedKeys;
+  localTimesRef.current = itemUpdatedAt;
 
   useEffect(() => {
-    const currentKey = `${order.id}:${columnField}`;
-    if (sessionKeyRef.current !== currentKey) {
-      sessionKeyRef.current = currentKey;
-      setColumnData(initialAuditData);
+    const currentSessionKey = `${order.id}:${columnField}`;
+    const incMap = extractColumnSupportChecklistMap(order, columnField);
+    const incEval = getEvaluatedColumnSupportChecklistKeys(order, columnField, incMap);
+    const rawCol = order[columnField];
+    const colData = rawCol && typeof rawCol === 'object' ? (rawCol as WorkOrderAuditColumnData) : undefined;
+    const incTimes = colData?.itemUpdatedAt || {};
+
+    if (sessionKeyRef.current !== currentSessionKey) {
+      sessionKeyRef.current = currentSessionKey;
+      setChecklistValues(incMap);
+      setEvaluatedKeys(incEval);
+      setItemUpdatedAt(incTimes);
+      if (incEval.length > 0) {
+        const st = calculateSupportChecklistStats(incMap, incEval);
+        setMainStatus(st.isAllApplicableCompleted ? 'مؤهل' : 'غير مؤهل');
+      } else {
+        setMainStatus('');
+      }
       return;
     }
 
-    // Concurrent remote update on the same work order & audit column: merge per category using evaluatedAt
-    setColumnData((prev) => {
-      const next: WorkOrderAuditColumnData = {
-        ...prev,
-        ...initialAuditData
-      };
-      for (const cat of AUDIT_CATEGORIES_META) {
-        const prevCat = prev[cat.key] as AuditSectionCategoryData | undefined;
-        const incCat = initialAuditData[cat.key] as AuditSectionCategoryData | undefined;
-        const prevTime = prevCat?.evaluatedAt ? new Date(prevCat.evaluatedAt).getTime() : 0;
-        const incTime = incCat?.evaluatedAt ? new Date(incCat.evaluatedAt).getTime() : 0;
-        const prevCount = prevCat?.items ? Object.keys(prevCat.items).length : 0;
-        const incCount = incCat?.items ? Object.keys(incCat.items).length : 0;
+    // Smart concurrent merge per item using itemUpdatedAt without side effects inside setState updaters
+    let anyRemoteNewer = false;
+    const mergedValues = { ...localValuesRef.current };
+    const mergedEvalSet = new Set<string>(localEvalRef.current);
+    const mergedTimes = { ...localTimesRef.current };
 
-        if (prevTime > incTime || (prevTime === incTime && prevCount > incCount)) {
-          next[cat.key] = prevCat!;
-        } else if (incCat) {
-          next[cat.key] = incCat;
-        }
+    for (const item of TECHNICAL_SUPPORT_CHECKLIST_ITEMS) {
+      const k = item.key;
+      const prevT = mergedTimes[k] ? new Date(mergedTimes[k]).getTime() : 0;
+      const incT = incTimes[k] ? new Date(incTimes[k]).getTime() : 0;
+      if (incT > prevT) {
+        anyRemoteNewer = true;
+        mergedValues[k] = incMap[k];
+        mergedTimes[k] = incTimes[k];
+        if (incEval.includes(k)) mergedEvalSet.add(k);
+        else mergedEvalSet.delete(k);
       }
-      const overall = calculateOverallAuditColumnSummary(next);
-      const evaluatedCategoriesCount =
-        overall.compliantCategories + overall.nonCompliantCategories + overall.naCategories;
-      next.mainStatus = evaluatedCategoriesCount > 0 ? overall.derivedMainStatus : (initialAuditData.mainStatus || prev.mainStatus || 'غير محدد');
-      return next;
-    });
-  }, [order.id, columnField, initialAuditData]);
+    }
+
+    if (anyRemoteNewer) {
+      const nextEvalArr = TECHNICAL_SUPPORT_CHECKLIST_ITEMS
+        .map(i => i.key)
+        .filter(k => mergedEvalSet.has(k));
+
+      setChecklistValues(mergedValues);
+      setEvaluatedKeys(nextEvalArr);
+      setItemUpdatedAt(mergedTimes);
+
+      if (nextEvalArr.length > 0) {
+        const st = calculateSupportChecklistStats(mergedValues, nextEvalArr);
+        setMainStatus(st.isAllApplicableCompleted ? 'مؤهل' : 'غير مؤهل');
+      } else if (colData?.mainStatus === 'مؤهل' || colData?.mainStatus === 'غير مؤهل') {
+        setMainStatus(colData.mainStatus);
+      } else {
+        setMainStatus('غير محدد');
+      }
+    }
+  }, [order, columnField]);
 
   useEffect(() => {
-    if (initialCategoryKey) {
-      setActiveCategory(initialCategoryKey);
+    setHighlightedKey(initialFocusField || null);
+  }, [initialFocusField]);
+
+  useEffect(() => {
+    if (initialOpenStages || initialCategoryKey) {
+      setIsStagesModalOpen(true);
     }
-  }, [initialCategoryKey]);
+  }, [initialOpenStages, initialCategoryKey]);
 
-  const currentCategoryMeta =
-    AUDIT_CATEGORIES_META.find(c => c.key === activeCategory) || AUDIT_CATEGORIES_META[0];
-
-  // Finalize and auto-sync helper
-  const buildFinalizedAuditData = (draft: WorkOrderAuditColumnData, explicitMainStatus?: 'مؤهل' | 'غير مؤهل' | 'غير محدد'): WorkOrderAuditColumnData => {
-    const updated: WorkOrderAuditColumnData = {
-      ...draft,
-      lastUpdatedAt: new Date().toISOString()
-    };
-
-    for (const cat of AUDIT_CATEGORIES_META) {
-      const catData = draft[cat.key] as AuditSectionCategoryData | undefined;
-      const calc = calculateCategoryAuditStatus(catData, cat.itemCount);
-      updated[cat.key] = {
-        ...(catData || { items: {} }),
-        items: { ...(catData?.items || {}) },
-        status: calc.status,
-        compliancePercentage: calc.compliancePercentage
-      };
-    }
-
-    const overall = calculateOverallAuditColumnSummary(updated);
-    const evaluatedCategoriesCount =
-      overall.compliantCategories + overall.nonCompliantCategories + overall.naCategories;
-
-    if (explicitMainStatus !== undefined) {
-      updated.mainStatus = explicitMainStatus;
-    } else if (evaluatedCategoriesCount > 0) {
-      updated.mainStatus = overall.derivedMainStatus;
-    } else {
-      updated.mainStatus = 'غير محدد';
-    }
-
-    return updated;
-  };
-
-  const triggerLiveSync = (nextData: WorkOrderAuditColumnData) => {
-    setColumnData(nextData);
-    try {
-      onSave(nextData, false);
-    } catch (_) {}
-  };
-
-  // Toggle single item in active category with instant live sync
-  const handleItemOptionChange = (itemIndex: number, option: AuditItemOption) => {
-    if (!canEdit) return;
-
-    const currentCat = (columnData[activeCategory] as AuditSectionCategoryData) || { items: {} };
-    const currentItems = { ...(currentCat.items || {}) };
-
-    if (currentItems[itemIndex] === option) {
-      delete currentItems[itemIndex];
-    } else {
-      currentItems[itemIndex] = option;
-    }
-
-    const calc = calculateCategoryAuditStatus({ items: currentItems }, currentCategoryMeta.items.length);
-
-    const draft: WorkOrderAuditColumnData = {
-      ...columnData,
-      [activeCategory]: {
-        ...currentCat,
-        items: currentItems,
-        status: calc.status,
-        compliancePercentage: calc.compliancePercentage,
-        evaluatedAt: new Date().toISOString()
-      }
-    };
-
-    const finalized = buildFinalizedAuditData(draft);
-    triggerLiveSync(finalized);
-  };
-
-  // Bulk action: Set all items in the ACTIVE category with instant live sync
-  const handleBulkSetOptionForActiveCategory = (option: AuditItemOption) => {
-    if (!canEdit) return;
-
-    const currentCat = (columnData[activeCategory] as AuditSectionCategoryData) || { items: {} };
-    const newItems: Record<number, AuditItemOption> = {};
-    currentCategoryMeta.items.forEach((_, idx) => {
-      newItems[idx] = option;
-    });
-
-    const calc = calculateCategoryAuditStatus({ items: newItems }, currentCategoryMeta.items.length);
-
-    const draft: WorkOrderAuditColumnData = {
-      ...columnData,
-      [activeCategory]: {
-        ...currentCat,
-        items: newItems,
-        status: calc.status,
-        compliancePercentage: calc.compliancePercentage,
-        evaluatedAt: new Date().toISOString()
-      }
-    };
-
-    const finalized = buildFinalizedAuditData(draft);
-    triggerLiveSync(finalized);
-  };
-
-  // Global Bulk Action: Set all items across ALL 18 categories at once with instant live sync
-  const handleBulkSetOptionAllCategories = (option: AuditItemOption) => {
-    if (!canEdit) return;
-
-    const draft: WorkOrderAuditColumnData = {
-      ...columnData
-    };
-
-    for (const cat of AUDIT_CATEGORIES_META) {
-      const currentCat = (columnData[cat.key] as AuditSectionCategoryData) || { items: {} };
-      const newItems: Record<number, AuditItemOption> = {};
-      cat.items.forEach((_, idx) => {
-        newItems[idx] = option;
-      });
-      const calc = calculateCategoryAuditStatus({ items: newItems }, cat.itemCount);
-      draft[cat.key] = {
-        ...currentCat,
-        items: newItems,
-        status: calc.status,
-        compliancePercentage: calc.compliancePercentage,
-        evaluatedAt: new Date().toISOString()
-      };
-    }
-
-    const explicitMain: 'مؤهل' | 'غير مؤهل' | 'غير محدد' =
-      option === 'ممتثل' ? 'مؤهل' : option === 'غير ممتثل' ? 'غير مؤهل' : 'مؤهل';
-    const finalized = buildFinalizedAuditData(draft, explicitMain);
-    triggerLiveSync(finalized);
-  };
-
-  // Reset current category
-  const handleResetCategory = () => {
-    if (!canEdit) return;
-
-    const draft: WorkOrderAuditColumnData = {
-      ...columnData,
-      [activeCategory]: {
-        items: {},
-        status: 'قيد التدقيق',
-        compliancePercentage: 0,
-        notes: ''
-      }
-    };
-
-    const finalized = buildFinalizedAuditData(draft);
-    triggerLiveSync(finalized);
-  };
-
-  // Update Category Notes
-  const handleNotesChange = (text: string) => {
-    if (!canEdit) return;
-    setColumnData(prev => ({
-      ...prev,
-      [activeCategory]: {
-        ...((prev[activeCategory] as AuditSectionCategoryData) || { items: {} }),
-        notes: text
-      }
-    }));
-  };
-
-  // Handle Main Status update (مؤهل / غير مؤهل) with instant live sync
-  const handleMainStatusChange = (status: 'مؤهل' | 'غير مؤهل') => {
-    if (!canEdit) return;
-    const nextMain = columnData.mainStatus === status ? 'غير محدد' : status;
-    const finalized = buildFinalizedAuditData(columnData, nextMain);
-    triggerLiveSync(finalized);
-  };
-
-  // Save & Close handler
-  const handleSaveAndClose = async () => {
-    setIsSaving(true);
-    try {
-      const finalData = buildFinalizedAuditData(columnData);
-      await onSave(finalData, true);
-      onClose();
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const currentCatData = (columnData[activeCategory] as AuditSectionCategoryData) || { items: {} };
-  const currentSummary = calculateCategoryAuditStatus(currentCatData, currentCategoryMeta.items.length);
-  const overallSummary = calculateOverallAuditColumnSummary(columnData);
-  const evaluatedTotalCount =
-    overallSummary.compliantCategories + overallSummary.nonCompliantCategories + overallSummary.naCategories;
-  const effectiveMainStatus =
-    evaluatedTotalCount > 0
-      ? overallSummary.derivedMainStatus
-      : columnData.mainStatus && columnData.mainStatus !== 'غير محدد'
-      ? columnData.mainStatus
-      : overallSummary.derivedMainStatus;
-
-  const filteredItems = useMemo(() => {
-    return currentCategoryMeta.items
-      .map((item, index) => ({ text: item, index }))
-      .filter(({ text, index }) => {
-        if (!searchQuery.trim()) return true;
-        const q = searchQuery.trim().toLowerCase();
-        return text.toLowerCase().includes(q) || (index + 1).toString().includes(q);
-      });
-  }, [currentCategoryMeta, searchQuery]);
+  const stats = useMemo(
+    () => calculateSupportChecklistStats(checklistValues, evaluatedKeys),
+    [checklistValues, evaluatedKeys]
+  );
 
   if (!isOpen) return null;
 
+  const renderItemIcon = (iconName: SupportChecklistItemMeta['iconName'], className = 'w-5 h-5') => {
+    switch (iconName) {
+      case 'meter':
+        return <Gauge className={className} />;
+      case 'excavation':
+        return <Pickaxe className={className} />;
+      case 'equipment':
+        return <Boxes className={className} />;
+      case 'overhead':
+        return <Zap className={className} />;
+      case 'fileText':
+        return <FileText className={className} />;
+      case 'fileCheck':
+        return <FileCheck2 className={className} />;
+      case 'spreadsheet':
+        return <FileSpreadsheet className={className} />;
+      case 'layers':
+        return <Layers className={className} />;
+      case 'shield':
+      default:
+        return <ShieldCheck className={className} />;
+    }
+  };
+
+  const buildUpdatedAuditColumnData = (
+    nextValues: Record<SupportChecklistFieldKey, SupportChecklistValue>,
+    nextMainStatus: 'مؤهل' | 'غير مؤهل' | 'قيد التدقيق' | 'غير محدد' | '',
+    nextEvaluatedKeys: string[],
+    nextItemTimes: Record<string, string>
+  ): WorkOrderAuditColumnData => {
+    const nowIso = new Date().toISOString();
+    const rawCol = order[columnField];
+    const existingColData: WorkOrderAuditColumnData =
+      rawCol && typeof rawCol === 'object'
+        ? (rawCol as WorkOrderAuditColumnData)
+        : createEmptyAuditColumnData();
+    const nextStats = calculateSupportChecklistStats(nextValues, nextEvaluatedKeys);
+
+    const synced18 = sync18CategoriesFromPrimarySupportChecklist(
+      existingColData,
+      nextValues,
+      nextEvaluatedKeys,
+      nowIso
+    );
+
+    const isEmptyEval = nextEvaluatedKeys.length === 0 && nextMainStatus !== 'مؤهل' && nextMainStatus !== 'غير مؤهل';
+
+    return {
+      ...synced18,
+      supportChecklist: isEmptyEval ? {} : { ...nextValues },
+      evaluatedKeys: [...nextEvaluatedKeys],
+      itemUpdatedAt: { ...nextItemTimes },
+      compliancePercentage:
+        nextEvaluatedKeys.length > 0
+          ? nextStats.compliancePercentage
+          : nextMainStatus === 'مؤهل'
+          ? 100
+          : 0,
+      mainStatus: isEmptyEval ? ('' as any) : (nextMainStatus as any),
+      lastUpdatedAt: isEmptyEval ? '' : nowIso
+    };
+  };
+
+  const triggerSync = (
+    nextValues: Record<SupportChecklistFieldKey, SupportChecklistValue>,
+    nextMainStatus: 'مؤهل' | 'غير مؤهل' | 'قيد التدقيق' | 'غير محدد' | '',
+    nextEvaluatedKeys: string[],
+    nextItemTimes: Record<string, string>,
+    shouldClose = false
+  ) => {
+    if (!canEdit) return;
+    const updatedData = buildUpdatedAuditColumnData(
+      nextValues,
+      nextMainStatus,
+      nextEvaluatedKeys,
+      nextItemTimes
+    );
+    if (shouldClose) {
+      setIsSaving(true);
+      Promise.resolve(onSave(updatedData, true)).finally(() => {
+        setIsSaving(false);
+        onClose();
+      });
+    } else {
+      // Non-blocking instant sync for in-modal option clicks (<1ms UI response)
+      Promise.resolve(onSave(updatedData, false)).catch(() => {});
+    }
+  };
+
+  const handleSelectOption = (key: SupportChecklistFieldKey, val: SupportChecklistValue) => {
+    if (!canEdit) return;
+    const nowIso = new Date().toISOString();
+    const isAlreadyEvaluatedWithSameVal = evaluatedKeys.includes(key) && checklistValues[key] === val;
+
+    let nextValues: Record<SupportChecklistFieldKey, SupportChecklistValue>;
+    let nextEvaluatedKeys: string[];
+
+    if (isAlreadyEvaluatedWithSameVal) {
+      nextValues = {
+        ...checklistValues,
+        [key]: 'غير مكتمل'
+      };
+      nextEvaluatedKeys = evaluatedKeys.filter(k => k !== key);
+    } else {
+      nextValues = {
+        ...checklistValues,
+        [key]: val
+      };
+      nextEvaluatedKeys = TECHNICAL_SUPPORT_CHECKLIST_ITEMS
+        .map(i => i.key)
+        .filter(k => k === key || evaluatedKeys.includes(k));
+    }
+
+    const nextItemTimes = {
+      ...itemUpdatedAt,
+      [key]: nowIso
+    };
+
+    const nextStats = calculateSupportChecklistStats(nextValues, nextEvaluatedKeys);
+    const autoMainStatus: 'مؤهل' | 'غير مؤهل' | 'قيد التدقيق' | 'غير محدد' | '' =
+      nextEvaluatedKeys.length === 0
+        ? ''
+        : nextStats.isAllApplicableCompleted
+        ? 'مؤهل'
+        : 'غير مؤهل';
+
+    setChecklistValues(nextValues);
+    setEvaluatedKeys(nextEvaluatedKeys);
+    setItemUpdatedAt(nextItemTimes);
+    setMainStatus(autoMainStatus);
+
+    triggerSync(nextValues, autoMainStatus, nextEvaluatedKeys, nextItemTimes, false);
+  };
+
+  const handleMainStatusToggle = (targetStatus: 'مؤهل' | 'غير مؤهل') => {
+    if (!canEdit) return;
+    const nextMain: 'مؤهل' | 'غير مؤهل' | 'قيد التدقيق' | 'غير محدد' | '' =
+      mainStatus === targetStatus && evaluatedKeys.length === 0 ? '' : targetStatus;
+    setMainStatus(nextMain);
+    triggerSync(checklistValues, nextMain, evaluatedKeys, itemUpdatedAt, false);
+  };
+
+  const handleBulkSetAll = (val: SupportChecklistValue) => {
+    if (!canEdit) return;
+    const nowIso = new Date().toISOString();
+    const nextValues: Record<SupportChecklistFieldKey, SupportChecklistValue> = {
+      meterPhotoDocumentation: val,
+      excavationPhotoDocumentation: val,
+      equipmentPhotoDocumentation: val,
+      overheadPhotoDocumentation: val,
+      consultantForms: val,
+      consultantClearanceForms: val,
+      form190: val,
+      form200: val,
+      inspectionForm: val
+    };
+    const allKeys = TECHNICAL_SUPPORT_CHECKLIST_ITEMS.map(i => i.key);
+    const nextItemTimes: Record<string, string> = { ...itemUpdatedAt };
+    for (const k of allKeys) {
+      nextItemTimes[k] = nowIso;
+    }
+
+    const autoMainStatus: 'مؤهل' | 'غير مؤهل' = val === 'غير مكتمل' ? 'غير مؤهل' : 'مؤهل';
+    setChecklistValues(nextValues);
+    setEvaluatedKeys(allKeys);
+    setItemUpdatedAt(nextItemTimes);
+    setMainStatus(autoMainStatus);
+
+    triggerSync(nextValues, autoMainStatus, allKeys, nextItemTimes, false);
+  };
+
+  const handleResetAllInternal = () => {
+    if (!canEdit) return;
+    const nowIso = new Date().toISOString();
+    const nextValues: Record<SupportChecklistFieldKey, SupportChecklistValue> = {
+      meterPhotoDocumentation: 'غير مكتمل',
+      excavationPhotoDocumentation: 'غير مكتمل',
+      equipmentPhotoDocumentation: 'غير مكتمل',
+      overheadPhotoDocumentation: 'غير مكتمل',
+      consultantForms: 'غير مكتمل',
+      consultantClearanceForms: 'غير مكتمل',
+      form190: 'غير مكتمل',
+      form200: 'غير مكتمل',
+      inspectionForm: 'غير مكتمل'
+    };
+    const nextItemTimes: Record<string, string> = { ...itemUpdatedAt };
+    for (const item of TECHNICAL_SUPPORT_CHECKLIST_ITEMS) {
+      nextItemTimes[item.key] = nowIso;
+    }
+
+    setChecklistValues(nextValues);
+    setEvaluatedKeys([]);
+    setItemUpdatedAt(nextItemTimes);
+    setMainStatus('');
+
+    triggerSync(nextValues, '', [], nextItemTimes, false);
+  };
+
+  const rawColData = order[columnField];
+  const colData: WorkOrderAuditColumnData =
+    rawColData && typeof rawColData === 'object' ? (rawColData as WorkOrderAuditColumnData) : {};
+  const isMainQualified = mainStatus === 'مؤهل';
+  const isMainNotQualified = mainStatus === 'غير مؤهل';
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/70 backdrop-blur-xs transition-opacity duration-200"
+      className="fixed inset-0 z-[99999] flex items-center justify-center p-2 sm:p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-6xl bg-gradient-to-br from-[#f8fafc] via-[#f1f5f9] to-[#eef2ff] rounded-2xl shadow-2xl border border-slate-300 flex flex-col max-h-[94vh] overflow-hidden text-right font-sans"
+        className="relative w-full max-w-5xl bg-gradient-to-br from-[#f8fafc] via-[#f1f5f9] to-[#eef2ff] rounded-2xl shadow-2xl border-2 border-[#002855] flex flex-col max-h-[92vh] overflow-hidden text-right font-sans"
         dir="rtl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Modal Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-300 bg-gradient-to-l from-slate-100 via-blue-50/80 to-indigo-50/80 text-slate-900 shrink-0">
+        {/* Top Executive Header with مراحل التدقيق in the Top Corner */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-b-2 border-[#F58220] bg-gradient-to-l from-[#001D40] via-[#002855] to-[#004B8D] text-white shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 border border-blue-200 text-blue-800 shadow-2xs">
-              <FileCheck2 className="w-5 h-5" />
+            <div className="p-2.5 rounded-xl bg-[#7F1D1D] border border-red-400/50 text-white shadow-xs">
+              <Award className="w-5 h-5" />
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider bg-indigo-100/90 text-indigo-950 border border-indigo-200 px-2 py-0.5 rounded-md">
-                  18 قائمة تدقيق معتمدة • {AUDIT_CATEGORIES_META.reduce((sum, c) => sum + c.items.length, 0)} بند فحص
+                <span className="text-[10px] font-black uppercase tracking-wider bg-[#7F1D1D] border border-red-300/40 text-white px-2.5 py-0.5 rounded-md shadow-2xs">
+                  CHECK LIST • عمود التدقيق المعتمد ({columnTitle})
                 </span>
-                <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
-                  بطاقة تحقق ومطابقة: {columnTitle}
+                <h3 className="text-base sm:text-lg font-black text-white tracking-tight">
+                  بطاقة نتائج تدقيق: {columnTitle}
                 </h3>
-                <span className="text-[11px] font-mono font-bold bg-amber-100/90 text-amber-950 border border-amber-300 px-2 py-0.5 rounded-md shadow-2xs">
+                <span className="text-xs font-mono font-bold bg-white/15 border border-white/25 text-[#FDB813] px-2.5 py-0.5 rounded-lg shadow-2xs">
                   {order.workOrderNumber}
                 </span>
               </div>
-              <p className="text-xs text-slate-700 mt-0.5 font-bold">
-                {order.office} • المقاول: {order.contractor} {order.consultant ? `• الاستشاري: ${order.consultant}` : ''} {order.workOrderCode ? `• نوع: ${order.workOrderCode}` : ''}
+              <p className="text-xs text-blue-100 mt-1 font-bold">
+                {order.office} • المقاول: {order.contractor} {order.consultant ? `• الاستشاري: ${order.consultant}` : ''} {order.workOrderCode ? `• نوع الأمر: ${order.workOrderCode}` : ''}
               </p>
             </div>
           </div>
 
-          {/* Main Status Toggle & Global Bulk Actions */}
+          {/* الركن العلوي: أيقونة مراحل التدقيق للاطلاع + نتيجة التدقيق التلقائية */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* Global Bulk Actions for ALL 18 Categories */}
-            {canEdit && (
-              <div className="flex items-center gap-1 bg-gradient-to-r from-slate-100 to-blue-50/70 p-1 rounded-xl border border-slate-300 shadow-2xs">
-                <span className="text-[10px] font-black text-slate-800 px-1.5">كل القوائم (18):</span>
-                <button
-                  type="button"
-                  onClick={() => handleBulkSetOptionAllCategories('ممتثل')}
-                  className="px-2 py-1 text-[10px] font-black rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white cursor-pointer transition-all shadow-2xs"
-                  title="تحديد ممتثل الكل في جميع القوائم الـ 18 دفعة واحدة"
-                >
-                  ممتثل الكل
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleBulkSetOptionAllCategories('غير ممتثل')}
-                  className="px-2 py-1 text-[10px] font-black rounded-lg bg-rose-700 hover:bg-rose-800 text-white cursor-pointer transition-all shadow-2xs"
-                  title="تحديد غير ممتثل الكل في جميع القوائم الـ 18 دفعة واحدة"
-                >
-                  غير ممتثل الكل
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleBulkSetOptionAllCategories('لا ينطبق')}
-                  className="px-2 py-1 text-[10px] font-black rounded-lg bg-amber-600 hover:bg-amber-700 text-white cursor-pointer transition-all shadow-2xs"
-                  title="تحديد لا ينطبق الكل في جميع القوائم الـ 18 دفعة واحدة"
-                >
-                  لا ينطبق الكل
-                </button>
-              </div>
-            )}
+            {/* أيقونة مراحل التدقيق في الركن العلوي للاطلاع فقط */}
+            <button
+              type="button"
+              onClick={() => setIsStagesModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#003366] hover:bg-[#002244] text-white border-b-2 border-orange-500 text-xs font-black shadow-xs transition-all cursor-pointer active:scale-95"
+              title="فتح نافذة مراحل التدقيق (القوائم الأساسية الـ 18 في عمود جانبي وبنودها للاطلاع فقط)"
+            >
+              <BookOpen className="w-4 h-4 text-amber-300 shrink-0" />
+              <span>مراحل التدقيق</span>
+              <span className="text-[10px] bg-orange-500 text-white px-1.5 py-0.2 rounded font-bold">
+                للاطلاع
+              </span>
+            </button>
 
-            {/* Automatic & Interactive Main Status */}
-            <div className="flex items-center gap-1.5 bg-gradient-to-r from-slate-100 to-indigo-50/70 p-1 rounded-xl border border-slate-300 shadow-2xs">
+            {/* Overall Audit Status Toggle */}
+            <div className="flex items-center gap-1.5 bg-gradient-to-r from-slate-100 to-indigo-50/70 p-1.5 rounded-xl border border-slate-300 shadow-2xs">
               <span className="text-[11px] font-black text-slate-800 px-2">نتيجة التدقيق التلقائية:</span>
               <button
                 type="button"
                 disabled={!canEdit}
-                onClick={() => handleMainStatusChange('مؤهل')}
-                className={`px-3 py-1 text-xs font-black rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                  effectiveMainStatus === 'مؤهل'
-                    ? 'bg-emerald-700 text-white shadow-2xs ring-2 ring-emerald-400/50'
+                onClick={() => handleMainStatusToggle('مؤهل')}
+                className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer flex items-center gap-1 shadow-2xs ${
+                  isMainQualified
+                    ? 'bg-emerald-700 text-white ring-2 ring-emerald-400/50'
                     : 'text-slate-800 hover:text-slate-950 hover:bg-slate-200/70'
                 }`}
               >
@@ -485,10 +459,10 @@ export const AuditChecklistModal: React.FC<AuditChecklistModalProps> = ({
               <button
                 type="button"
                 disabled={!canEdit}
-                onClick={() => handleMainStatusChange('غير مؤهل')}
-                className={`px-3 py-1 text-xs font-black rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                  effectiveMainStatus === 'غير مؤهل'
-                    ? 'bg-rose-700 text-white shadow-2xs ring-2 ring-rose-400/50'
+                onClick={() => handleMainStatusToggle('غير مؤهل')}
+                className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer flex items-center gap-1 shadow-2xs ${
+                  isMainNotQualified
+                    ? 'bg-rose-700 text-white ring-2 ring-rose-400/50'
                     : 'text-slate-800 hover:text-slate-950 hover:bg-slate-200/70'
                 }`}
               >
@@ -500,262 +474,264 @@ export const AuditChecklistModal: React.FC<AuditChecklistModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-700 hover:text-slate-950 hover:bg-slate-200/80 transition-colors cursor-pointer"
-              title="إغلاق"
+              className="p-2 rounded-xl text-slate-700 hover:text-slate-950 hover:bg-slate-200/80 transition-colors cursor-pointer"
+              title="إغلاق البطاقة"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* 18 Official Icons Grid Strip */}
-        <div className="p-3 bg-gradient-to-b from-slate-100/90 to-slate-200/60 border-b border-slate-300 shrink-0 max-h-[215px] overflow-y-auto">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-2 px-1">
-            <span className="text-xs font-black text-slate-900">
-              أيقونات قوائم الفحص والتدقيق المعتمدة (18 أيقونة تفاعلية تُحدّث حالة التأهيل تلقائياً):
-            </span>
-            <div className="flex flex-wrap items-center gap-2 text-[11px] font-black">
-              <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
-                ممتثل: {overallSummary.compliantCategories}
+        {/* Live Audit Summary & KPI Strip */}
+        <div className="px-5 py-3 bg-gradient-to-l from-slate-100/90 via-blue-50/50 to-indigo-50/50 border-b border-slate-300 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+            {/* Overall Decision Badge */}
+            <div
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border shadow-2xs ${
+                isMainQualified
+                  ? 'bg-emerald-700 text-white border-emerald-800'
+                  : isMainNotQualified
+                  ? 'bg-rose-700 text-white border-rose-800'
+                  : 'bg-slate-700 text-white border-slate-800'
+              }`}
+            >
+              {isMainQualified ? (
+                <CheckCircle2 className="w-4 h-4" />
+              ) : isMainNotQualified ? (
+                <XCircle className="w-4 h-4" />
+              ) : (
+                <Clock className="w-4 h-4" />
+              )}
+              <span>
+                حالة التأهيل ({columnTitle}):{' '}
+                {isMainQualified ? 'مؤهل' : isMainNotQualified ? 'غير مؤهل' : 'قيد التدقيق'}
               </span>
-              <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-900 border border-rose-300">
-                غير ممتثل: {overallSummary.nonCompliantCategories}
-              </span>
-              <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
-                لا ينطبق: {overallSummary.naCategories}
-              </span>
-              <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-950 border border-blue-300 font-mono">
-                الامتثال حسب ما تم تدقيقه: {overallSummary.averageCompliance}%
-              </span>
+            </div>
+
+            {/* Audited Items Count */}
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-100/90 border border-indigo-300 text-indigo-950 text-xs font-black">
+              <span>ما تم تدقيقه: {evaluatedKeys.length} من 9</span>
+            </div>
+
+            {/* Completed Count */}
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100/90 border border-emerald-300 text-emerald-950 text-xs font-black">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-700" />
+              <span>مكتمل متطابق: {stats.completedCount}</span>
+            </div>
+
+            {/* Incomplete Count */}
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-100/90 border border-rose-300 text-rose-950 text-xs font-black">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-700" />
+              <span>غير مكتمل: {stats.incompleteCount}</span>
+            </div>
+
+            {/* N/A Count */}
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-100/90 border border-amber-300 text-amber-950 text-xs font-black">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-600" />
+              <span>لا ينطبق: {stats.naCount}</span>
+            </div>
+
+            {/* Percentage Progress */}
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-100/90 border border-blue-300 text-blue-950 text-xs font-black">
+              <span>نسبة الاستيفاء:</span>
+              <span className="font-mono text-sm text-blue-800">{stats.compliancePercentage}%</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-1.5">
-            {AUDIT_CATEGORIES_META.map((cat, idx) => {
-              const isActive = activeCategory === cat.key;
-              const d = columnData[cat.key] as AuditSectionCategoryData | undefined;
-              const calc = calculateCategoryAuditStatus(d, cat.itemCount);
-              const tabStatus = calc.status;
-              const tabPercentage = calc.compliancePercentage;
-
-              const isCompliant = tabStatus === 'ممتثل';
-              const isNonCompliant = tabStatus === 'غير ممتثل';
-              const isNA = tabStatus === 'لا ينطبق';
-
-              return (
-                <button
-                  key={cat.key}
-                  type="button"
-                  onClick={() => {
-                    setActiveCategory(cat.key);
-                    setSearchQuery('');
-                  }}
-                  className={`flex flex-col items-center justify-between p-2 rounded-xl border transition-all cursor-pointer text-center ${
-                    isActive
-                      ? 'bg-[#003366] text-white border-[#003366] shadow-md ring-2 ring-orange-500 scale-[1.02]'
-                      : isCompliant
-                      ? 'bg-gradient-to-br from-emerald-50 to-teal-50/80 border-emerald-300 hover:from-emerald-100 hover:to-teal-100/80 text-emerald-950'
-                      : isNonCompliant
-                      ? 'bg-gradient-to-br from-rose-50 to-red-50/80 border-rose-300 hover:from-rose-100 hover:to-red-100/80 text-rose-950'
-                      : isNA
-                      ? 'bg-gradient-to-br from-amber-50 to-orange-50/80 border-amber-300 hover:from-amber-100 hover:to-orange-100/80 text-amber-950'
-                      : 'bg-gradient-to-br from-slate-50 to-blue-50/40 border-slate-300 hover:from-slate-100 hover:to-blue-50/70 text-slate-900'
-                  }`}
-                >
-                  <div className="flex items-center justify-center gap-1 w-full mb-1">
-                    <span className={`text-[10px] font-mono font-black px-1 rounded ${
-                      isActive ? 'bg-orange-500 text-white' : 'bg-slate-200 text-slate-800'
-                    }`}>
-                      {idx + 1}
-                    </span>
-                    {renderAuditCategoryIcon(cat.icon, `w-3.5 h-3.5 shrink-0 ${isActive ? 'text-amber-300' : 'text-[#003366]'}`)}
-                    <span className={`text-[11px] font-black truncate ${isActive ? 'text-white' : 'text-slate-900'}`}>
-                      {cat.title}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-1 w-full text-[10px]">
-                    <span className={`font-mono font-bold ${isActive ? 'text-amber-300' : 'text-slate-700'}`}>
-                      {calc.totalAnswered}/{cat.itemCount} ({tabPercentage}%)
-                    </span>
-                    <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-black ${
-                      isCompliant
-                        ? 'bg-emerald-700 text-white'
-                        : isNonCompliant
-                        ? 'bg-rose-700 text-white'
-                        : isNA
-                        ? 'bg-amber-600 text-white'
-                        : isActive
-                        ? 'bg-white/20 text-white'
-                        : 'bg-slate-200 text-slate-800'
-                    }`}>
-                      {tabStatus}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+          {/* Quick Bulk Actions for Authorized Auditors */}
+          {canEdit && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleBulkSetAll('مكتمل')}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-black transition-all cursor-pointer shadow-2xs active:scale-95"
+                title="تحديد جميع البنود الـ 9 كـ (مكتمل)"
+              >
+                <CheckCheck className="w-3.5 h-3.5" />
+                <span>تحديد الكل مكتمل</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBulkSetAll('لا ينطبق')}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-black transition-all cursor-pointer shadow-2xs active:scale-95"
+                title="تحديد جميع البنود كـ (لا ينطبق)"
+              >
+                <MinusCircle className="w-3.5 h-3.5" />
+                <span>الكل لا ينطبق</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBulkSetAll('غير مكتمل')}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-[11px] font-black transition-all cursor-pointer shadow-2xs active:scale-95"
+                title="تحديد جميع البنود كـ (غير مكتمل)"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                <span>الكل غير مكتمل</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleResetAllInternal}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 border border-slate-300 text-[11px] font-black transition-all cursor-pointer shadow-2xs active:scale-95"
+                title="إعادة البنود كداخلية غير مدقق عليها"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>إخفاء/إعادة ضبط</span>
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Active Checklist Content Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3.5 bg-gradient-to-b from-slate-100/70 via-blue-50/25 to-indigo-50/30">
-          {/* Category Summary Toolbar & Bulk Buttons for Active Category */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3.5 rounded-xl bg-gradient-to-l from-slate-100 via-blue-50/60 to-indigo-50/60 border border-slate-300 shadow-2xs">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2 text-sm font-extrabold text-[#003366]">
-                {renderAuditCategoryIcon(currentCategoryMeta.icon, 'w-5 h-5 text-orange-600')}
-                <span>قائمة تدقيق: {currentCategoryMeta.title}</span>
-                <span className="text-xs text-slate-700 font-bold">
-                  ({currentCategoryMeta.itemCount} بند فحص)
-                </span>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-bold text-slate-800">نسبة الامتثال:</span>
-                <span className={`font-mono text-xs font-black px-2.5 py-0.5 rounded-md border ${
-                  currentSummary.compliancePercentage >= 90
-                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                    : currentSummary.compliancePercentage >= 60
-                    ? 'bg-amber-100 text-amber-900 border-amber-300'
-                    : 'bg-rose-100 text-rose-900 border-rose-300'
-                }`}>
-                  {currentSummary.compliancePercentage}%
-                </span>
-                <span className="text-xs font-bold text-slate-700">
-                  ({currentSummary.compliantCount} ممتثل • {currentSummary.nonCompliantCount} غير ممتثل • {currentSummary.naCount} لا ينطبق)
-                </span>
-              </div>
-            </div>
-
-            {/* Bulk Actions for Active Category: ممتثل الكل / غير ممتثل الكل / لا ينطبق الكل */}
-            {canEdit && (
-              <div className="flex flex-wrap items-center gap-1.5 self-end lg:self-auto" role="group">
-                <button
-                  type="button"
-                  data-testid="bulk-all-compliant-btn"
-                  onClick={() => handleBulkSetOptionForActiveCategory('ممتثل')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-extrabold rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 active:bg-emerald-900 shadow-2xs cursor-pointer transition-all"
-                  title="تحديد ممتثل الكل لبنود هذه القائمة"
-                >
-                  <CheckCheck className="w-4 h-4" />
-                  <span>ممتثل الكل</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="bulk-all-non-compliant-btn"
-                  onClick={() => handleBulkSetOptionForActiveCategory('غير ممتثل')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-extrabold rounded-lg bg-rose-700 text-white hover:bg-rose-800 active:bg-rose-900 shadow-2xs cursor-pointer transition-all"
-                  title="تحديد غير ممتثل الكل لبنود هذه القائمة"
-                >
-                  <XCircle className="w-4 h-4" />
-                  <span>غير ممتثل الكل</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="bulk-all-na-btn"
-                  onClick={() => handleBulkSetOptionForActiveCategory('لا ينطبق')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-extrabold rounded-lg bg-amber-600 text-white hover:bg-amber-700 active:bg-amber-800 shadow-2xs cursor-pointer transition-all"
-                  title="تحديد لا ينطبق الكل لبنود هذه القائمة"
-                >
-                  <MinusCircle className="w-4 h-4" />
-                  <span>لا ينطبق الكل</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleResetCategory}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg text-slate-700 hover:text-slate-950 bg-slate-200/70 hover:bg-slate-300/70 border border-slate-300 cursor-pointer transition-colors"
-                  title="إعادة ضبط القائمة الحالية"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>إعادة ضبط</span>
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Search Filter Inside Category */}
-          <div className="relative">
-            <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={`بحث سريع في بنود (${currentCategoryMeta.title})...`}
-              className="w-full pl-3 pr-9 py-2 text-xs rounded-xl border border-slate-300 bg-slate-50/90 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#003366] focus:border-transparent text-slate-900 font-bold"
-            />
-          </div>
-
-          {/* Items List */}
-          <div className="space-y-2">
-            {filteredItems.map(({ text, index }) => {
-              const itemsMap = currentCatData?.items || {};
-              const currentVal = itemsMap[index];
+        {/* 9 Primary Checklist Items Cards Grid (قائمة تدقيق المساندة الفنية كقائمة أساسية) */}
+        <div className="p-4 sm:p-5 overflow-y-auto flex-1 bg-gradient-to-b from-slate-100/80 via-blue-50/25 to-indigo-50/35">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {TECHNICAL_SUPPORT_CHECKLIST_ITEMS.map((item, idx) => {
+              const isAudited = evaluatedKeys.includes(item.key);
+              const currentVal = checklistValues[item.key] || 'غير مكتمل';
+              const isCompleted = isAudited && currentVal === 'مكتمل';
+              const isIncomplete = isAudited && currentVal === 'غير مكتمل';
+              const isNA = isAudited && currentVal === 'لا ينطبق';
+              const isHighlighted = highlightedKey === item.key;
 
               return (
                 <div
-                  key={index}
-                  className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl border transition-all shadow-2xs ${
-                    currentVal === 'ممتثل'
-                      ? 'bg-gradient-to-l from-emerald-50/90 to-teal-50/60 border-emerald-300'
-                      : currentVal === 'غير ممتثل'
-                      ? 'bg-gradient-to-l from-rose-50/90 to-red-50/60 border-rose-300'
-                      : currentVal === 'لا ينطبق'
-                      ? 'bg-gradient-to-l from-amber-50/90 to-orange-50/60 border-amber-300'
-                      : 'bg-gradient-to-l from-slate-50/95 to-blue-50/30 border-slate-300/90 hover:border-slate-400'
-                  }`}
+                  key={item.key}
+                  className={`rounded-2xl p-3.5 border-2 transition-all shadow-xs flex flex-col justify-between gap-3 ${
+                    isCompleted
+                      ? 'bg-gradient-to-br from-emerald-50 via-teal-50/50 to-emerald-100/50 border-emerald-400 shadow-emerald-100'
+                      : isIncomplete
+                      ? 'bg-gradient-to-br from-rose-50 via-red-50/40 to-rose-100/50 border-rose-300 shadow-rose-100'
+                      : isNA
+                      ? 'bg-gradient-to-br from-amber-50 via-orange-50/40 to-amber-100/50 border-amber-300'
+                      : 'bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/30 border-slate-300'
+                  } ${isHighlighted ? 'ring-4 ring-blue-500/40 scale-[1.01]' : ''}`}
                 >
-                  {/* Item Label & Number with Bold Enterprise Hierarchy */}
-                  <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <span className="w-7 h-7 rounded-lg bg-slate-800 text-amber-300 font-mono text-xs font-black flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
-                      {index + 1}
+                  {/* Item Header */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs transition-colors ${
+                          isCompleted
+                            ? 'bg-emerald-700 text-white ring-2 ring-emerald-200'
+                            : isIncomplete
+                            ? 'bg-rose-700 text-white ring-2 ring-rose-200'
+                            : isNA
+                            ? 'bg-amber-600 text-white ring-2 ring-amber-200'
+                            : 'bg-slate-700 text-amber-300 ring-2 ring-slate-200'
+                        }`}
+                      >
+                        {renderItemIcon(item.iconName, 'w-5 h-5')}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-mono font-black px-1.5 py-0.5 rounded bg-slate-200 text-slate-800">
+                            بند {idx + 1}
+                          </span>
+                          <h4 className="text-xs sm:text-sm font-black text-slate-900 truncate">
+                            {item.title}
+                          </h4>
+                        </div>
+                        <p className="text-[10.5px] text-slate-700 font-bold mt-0.5 leading-snug line-clamp-2">
+                          {item.description}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Current Status Badge */}
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-xl text-[10.5px] font-black shrink-0 border shadow-2xs ${
+                        isCompleted
+                          ? 'bg-emerald-700 text-white border-emerald-800'
+                          : isIncomplete
+                          ? 'bg-rose-700 text-white border-rose-800'
+                          : isNA
+                          ? 'bg-amber-600 text-white border-amber-700'
+                          : 'bg-slate-200 text-slate-800 border-slate-300'
+                      }`}
+                    >
+                      {isCompleted && <CheckCircle2 className="w-3 h-3" />}
+                      {isIncomplete && <XCircle className="w-3 h-3" />}
+                      {isNA && <MinusCircle className="w-3 h-3" />}
+                      <span>{!isAudited ? 'داخلي (لم يُدقق)' : isCompleted ? 'متطابق ✓' : currentVal}</span>
                     </span>
-                    <p className="text-xs sm:text-sm text-slate-900 font-black leading-relaxed select-text">
-                      {text}
-                    </p>
                   </div>
 
-                  {/* 3-State Segmented Control: ممتثل / غير ممتثل / لا ينطبق with Bold High-Contrast Text */}
-                  <div className="flex items-center gap-1.5 bg-slate-200/75 p-1.5 rounded-xl shrink-0 self-end sm:self-auto border border-slate-300">
+                  {/* Synchronized Cell Display Indicator */}
+                  <div
+                    className={`flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-xl border text-[10.5px] font-black transition-all ${
+                      isCompleted
+                        ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs'
+                        : isNA
+                        ? 'bg-amber-100 text-amber-950 border-amber-300'
+                        : isIncomplete
+                        ? 'bg-rose-100 text-rose-950 border-rose-300'
+                        : 'bg-slate-200/75 text-slate-800 border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 truncate">
+                      <Link2 className={`w-3.5 h-3.5 shrink-0 ${isCompleted ? 'text-white' : 'text-blue-700'}`} />
+                      <span className="truncate">
+                        يظهر تلقائياً في خلية ({columnTitle}): {item.shortTitle}
+                      </span>
+                    </div>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[9.5px] font-black shrink-0 ${
+                        isCompleted
+                          ? 'bg-white text-emerald-900'
+                          : isNA
+                          ? 'bg-amber-600 text-white'
+                          : isIncomplete
+                          ? 'bg-rose-700 text-white'
+                          : 'bg-slate-300 text-slate-800'
+                      }`}
+                    >
+                      {!isAudited ? 'مخفي داخلياً' : isCompleted ? '✓ يظهر بالأخضر' : isNA ? 'يظهر لا ينطبق' : 'يظهر غير مكتمل'}
+                    </span>
+                  </div>
+
+                  {/* Interactive Checklist Options */}
+                  <div className="grid grid-cols-3 gap-1.5 pt-2 border-t border-slate-300/80">
+                    {/* Option 1: مكتمل */}
                     <button
                       type="button"
                       disabled={!canEdit}
-                      onClick={() => handleItemOptionChange(index, 'ممتثل')}
-                      className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer ${
-                        currentVal === 'ممتثل'
-                          ? 'bg-emerald-700 text-white shadow-xs ring-1 ring-emerald-500'
-                          : 'text-slate-800 hover:text-emerald-950 hover:bg-emerald-100/70'
-                      }`}
+                      onClick={() => handleSelectOption(item.key, 'مكتمل')}
+                      className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-xl text-[11px] font-black border-2 transition-all cursor-pointer active:scale-95 ${
+                        isCompleted
+                          ? 'bg-emerald-700 text-white border-emerald-800 shadow-sm ring-2 ring-emerald-400/50'
+                          : 'bg-slate-50 hover:bg-emerald-50 text-emerald-900 border-emerald-300 hover:border-emerald-500'
+                      } ${!canEdit ? 'opacity-80 cursor-default' : ''}`}
                     >
-                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                      <span>ممتثل</span>
+                      <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${isCompleted ? 'text-white' : 'text-emerald-700'}`} />
+                      <span>مكتمل</span>
                     </button>
 
+                    {/* Option 2: غير مكتمل */}
                     <button
                       type="button"
                       disabled={!canEdit}
-                      onClick={() => handleItemOptionChange(index, 'غير ممتثل')}
-                      className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer ${
-                        currentVal === 'غير ممتثل'
-                          ? 'bg-rose-700 text-white shadow-xs ring-1 ring-rose-500'
-                          : 'text-slate-800 hover:text-rose-950 hover:bg-rose-100/70'
-                      }`}
+                      onClick={() => handleSelectOption(item.key, 'غير مكتمل')}
+                      className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-xl text-[11px] font-black border-2 transition-all cursor-pointer active:scale-95 ${
+                        isIncomplete
+                          ? 'bg-rose-700 text-white border-rose-800 shadow-sm ring-2 ring-rose-400/50'
+                          : 'bg-slate-50 hover:bg-rose-50 text-rose-900 border-rose-300 hover:border-rose-500'
+                      } ${!canEdit ? 'opacity-80 cursor-default' : ''}`}
                     >
-                      <XCircle className="w-3.5 h-3.5 shrink-0" />
-                      <span>غير ممتثل</span>
+                      <XCircle className={`w-3.5 h-3.5 shrink-0 ${isIncomplete ? 'text-white' : 'text-rose-700'}`} />
+                      <span>غير مكتمل</span>
                     </button>
 
+                    {/* Option 3: لا ينطبق */}
                     <button
                       type="button"
                       disabled={!canEdit}
-                      onClick={() => handleItemOptionChange(index, 'لا ينطبق')}
-                      className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer ${
-                        currentVal === 'لا ينطبق'
-                          ? 'bg-amber-600 text-white shadow-xs ring-1 ring-amber-400'
-                          : 'text-slate-800 hover:text-amber-950 hover:bg-amber-100/70'
-                      }`}
+                      onClick={() => handleSelectOption(item.key, 'لا ينطبق')}
+                      className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-xl text-[11px] font-black border-2 transition-all cursor-pointer active:scale-95 ${
+                        isNA
+                          ? 'bg-amber-600 text-white border-amber-700 shadow-sm ring-2 ring-amber-300/60'
+                          : 'bg-slate-50 hover:bg-amber-50 text-amber-950 border-amber-300 hover:border-amber-500'
+                      } ${!canEdit ? 'opacity-80 cursor-default' : ''}`}
                     >
-                      <MinusCircle className="w-3.5 h-3.5 shrink-0" />
+                      <MinusCircle className={`w-3.5 h-3.5 shrink-0 ${isNA ? 'text-white' : 'text-amber-700'}`} />
                       <span>لا ينطبق</span>
                     </button>
                   </div>
@@ -763,60 +739,60 @@ export const AuditChecklistModal: React.FC<AuditChecklistModalProps> = ({
               );
             })}
           </div>
-
-          {/* Category Notes */}
-          <div className="pt-2">
-            <label className="block text-xs font-black text-slate-800 mb-1">
-              ملاحظات وتوصيات الفحص لقائمة ({currentCategoryMeta.title}):
-            </label>
-            <textarea
-              rows={2}
-              value={currentCatData?.notes || ''}
-              onChange={(e) => handleNotesChange(e.target.value)}
-              placeholder="أدخل أي ملاحظات فنية أو تفاصيل إضافية..."
-              className="w-full p-2.5 text-xs rounded-xl border border-slate-300 bg-slate-50/90 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#003366] text-slate-900 font-semibold"
-            />
-          </div>
         </div>
 
         {/* Modal Footer */}
-        <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 border-t border-slate-300 bg-gradient-to-l from-slate-100 via-blue-50/70 to-indigo-50/70 shrink-0">
-          <div className="text-xs text-slate-700 flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-300 font-black text-[11px]">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-              <span>مزامنة تلقائية ذكية لحالة التأهيل والبنود</span>
-            </span>
-            {columnData.auditorEmail && (
-              <>
-                <span>•</span>
-                <span className="font-bold text-[#003366]">المدقق: {columnData.auditorEmail}</span>
-                <span className="font-mono text-slate-800 font-bold">{columnData.auditDateRiyadh} {columnData.auditTimeRiyadh}</span>
-              </>
+        <div className="px-5 py-3.5 bg-gradient-to-l from-slate-100 via-blue-50/70 to-indigo-50/70 border-t border-slate-300 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700 font-bold">
+            {(colData.auditDateRiyadh || colData.lastUpdatedAt) && (
+              <span className="inline-flex items-center gap-1 bg-slate-200/80 px-2.5 py-1 rounded-lg border border-slate-300 font-mono text-[11px] text-slate-900">
+                <Clock className="w-3.5 h-3.5 text-blue-700" />
+                <span>آخر تدقيق: {colData.auditDateRiyadh ? `${colData.auditDateRiyadh} ${colData.auditTimeRiyadh || ''}` : colData.lastUpdatedAt}</span>
+              </span>
             )}
+            {(colData.auditorEmail || colData.auditorName) && (
+              <span className="inline-flex items-center gap-1 bg-blue-100/80 px-2.5 py-1 rounded-lg border border-blue-300 text-[11px] text-blue-950">
+                <UserCheck className="w-3.5 h-3.5 text-blue-800" />
+                <span>المدقق: {colData.auditorEmail || colData.auditorName}</span>
+              </span>
+            )}
+            <span className="text-[11px] text-emerald-800 font-black flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>مزامنة فورية ذكية مع حفظ البنود واستعراض (مراحل التدقيق) من الركن العلوي</span>
+            </span>
           </div>
 
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-black text-slate-800 bg-slate-200/75 hover:bg-slate-300/80 border border-slate-300 rounded-xl cursor-pointer transition-colors"
+              className="px-4 py-2 rounded-xl border border-slate-300 bg-slate-200/80 hover:bg-slate-300 text-slate-900 text-xs font-black transition-colors cursor-pointer"
             >
-              إغلاق
+              إغلاق البطاقة
             </button>
             {canEdit && (
               <button
                 type="button"
                 disabled={isSaving}
-                onClick={handleSaveAndClose}
-                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-extrabold text-white bg-[#003366] hover:bg-[#002244] active:bg-slate-950 rounded-xl cursor-pointer transition-all shadow-xs disabled:opacity-50 border-b-2 border-orange-500"
+                onClick={() => triggerSync(checklistValues, mainStatus, evaluatedKeys, itemUpdatedAt, true)}
+                className="px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-800 hover:to-teal-800 text-white text-xs font-black shadow-md transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 disabled:opacity-60"
               >
-                <Save className="w-4 h-4 text-orange-400" />
-                <span>{isSaving ? 'جارٍ الحفظ والمزامنة...' : 'حفظ وإغلاق البطاقة'}</span>
+                <Save className="w-4 h-4" />
+                <span>{isSaving ? 'جارٍ الحفظ...' : `حفظ ومزامنة نتائج (${columnTitle})`}</span>
               </button>
             )}
           </div>
         </div>
       </div>
+
+      {/* نافذة مراحل التدقيق المنبثقة فوق البطاقة للاطلاع فقط */}
+      <AuditStagesReferenceModal
+        isOpen={isStagesModalOpen}
+        onClose={() => setIsStagesModalOpen(false)}
+        order={order}
+        columnTitle={columnTitle}
+        initialCategoryKey={initialCategoryKey}
+      />
     </div>
   );
 };

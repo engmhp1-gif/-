@@ -343,7 +343,7 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative w-full border-b px-2.5 py-2 sm:px-4 select-none font-['Cairo',sans-serif] bg-slate-50 border-slate-200 text-slate-800"
+      className="relative w-full border-b-2 border-[#002855]/15 px-2.5 py-2 sm:px-4 select-none font-['Cairo',sans-serif] bg-gradient-to-l from-[#F8FAFC] via-[#F1F5F9] to-[#F8FAFC] text-slate-800 shadow-2xs"
     >
       {/* =========================================================================
           SINGLE UNIFIED WORLD-CLASS COMMAND BAR ROW (كل الأيقونات مجمعة في سطر واحد متكامل)
@@ -354,20 +354,20 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           
           {/* 0. البحث الفوري المباشر (Instant Search Input) */}
-          <div className="relative w-36 sm:w-44 md:w-52 shrink-0">
+          <div className="relative w-40 sm:w-48 md:w-56 shrink-0">
             <input
               type="text"
               value={searchText}
               onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="بحث فوري بالجدول..."
-              className="w-full pl-6 pr-7 py-1.5 text-xs h-8.5 font-bold transition-all focus:outline-none rounded-xl bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 shadow-2xs"
+              placeholder="بحث فوري برقم الأمر أو المقاول..."
+              className="w-full pl-6 pr-7 py-1.5 text-xs h-8.5 font-black transition-all focus:outline-none rounded-xl bg-white border-2 border-[#002855]/20 text-[#002855] placeholder:text-slate-400 focus:border-[#F58220] focus:ring-2 focus:ring-[#F58220]/20 shadow-2xs"
             />
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <Search className="w-3.5 h-3.5 text-[#004B8D] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             {searchText && (
               <button
                 type="button"
                 onClick={() => onSearchChange('')}
-                className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-rose-600 cursor-pointer"
                 title="مسح البحث"
               >
                 <X className="w-3.5 h-3.5" />
@@ -375,19 +375,19 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
             )}
           </div>
 
-          <div className={`h-6 w-px shrink-0 ${isERP ? 'bg-slate-300' : 'bg-slate-800'}`} />
+          <div className="h-6 w-px shrink-0 bg-[#002855]/15" />
 
           {/* 1. أيقونة الإدخال والعمليات (Operations, Import & Edit Hub) */}
-          <div className="flex items-center gap-1 p-0.5 shrink-0 bg-white rounded-xl border border-slate-300 shadow-2xs">
+          <div className="flex items-center gap-1 p-0.5 shrink-0 bg-white rounded-xl border border-[#002855]/20 shadow-2xs">
             {/* زر سريع لإضافة أمر بنقرة واحدة */}
             <button
               type="button"
               onClick={onOpenAddModal}
-              className="h-7.5 px-2.5 font-black text-xs flex items-center gap-1 cursor-pointer transition-all rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-2xs active:scale-95"
+              className="h-7.5 px-2.5 font-black text-xs flex items-center gap-1 cursor-pointer transition-all rounded-lg bg-[#F58220] hover:bg-[#d96b12] text-white shadow-2xs active:scale-95"
               title="إضافة أمر عمل جديد فوراً"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>إضافة</span>
+              <span>إضافة أمر</span>
             </button>
 
             {/* القائمة المنسدلة الشاملة للإدخال والاستيراد والتعديل */}
@@ -395,16 +395,16 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
               type="button"
               data-menu-trigger="operations"
               onClick={(e) => toggleMenu('operations', e)}
-              className={`h-7.5 px-2.5 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer border ${
+              className={`h-7.5 px-2.5 font-black text-xs flex items-center gap-1.5 transition-all cursor-pointer border ${
                 activeMenu === 'operations'
-                  ? 'rounded-lg bg-blue-100 text-blue-900 border-blue-400 font-black'
-                  : 'rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
+                  ? 'rounded-lg bg-[#002855] text-white border-[#002855]'
+                  : 'rounded-lg bg-slate-50 hover:bg-blue-50/60 text-[#002855] border-slate-200'
               }`}
               title="قائمة الإدخال، استيراد Excel، استيراد المتوافق، وتعديل أوامر العمل"
             >
-              <Layers className="w-3.5 h-3.5 text-blue-700" />
+              <Layers className={`w-3.5 h-3.5 ${activeMenu === 'operations' ? 'text-[#FDB813]' : 'text-[#004B8D]'}`} />
               <span>الإدخال والعمليات</span>
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'operations' ? 'rotate-180' : 'text-slate-400'}`} />
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'operations' ? 'rotate-180 text-[#FDB813]' : 'text-slate-400'}`} />
             </button>
           </div>
 
@@ -415,21 +415,21 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
             onClick={(e) => toggleMenu('governance', e)}
             className={`h-8.5 px-3 text-xs flex items-center gap-1.5 transition-all cursor-pointer border rounded-xl shrink-0 ${
               activeMenu === 'governance'
-                ? 'bg-emerald-600 text-white border-emerald-700 font-black shadow-2xs'
-                : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-300 font-bold shadow-2xs'
+                ? 'bg-[#7F1D1D] text-white border-red-900 font-black shadow-2xs'
+                : 'bg-white hover:bg-red-50/40 text-[#002855] border-[#002855]/20 font-black shadow-2xs'
             }`}
             title="اعتماد مؤهل 155، وتقارير الملاحظات والملاحظات المتكررة"
           >
-            <ShieldCheck className={`w-4 h-4 shrink-0 ${activeMenu === 'governance' ? 'text-amber-200' : 'text-emerald-700'}`} />
+            <ShieldCheck className={`w-4 h-4 shrink-0 ${activeMenu === 'governance' ? 'text-[#FDB813]' : 'text-[#7F1D1D]'}`} />
             <span>حوكمة وتدقيق 155</span>
             <span className={`font-mono text-[10px] px-1.5 py-0.2 rounded ${
               activeMenu === 'governance'
-                ? 'bg-emerald-700 text-white font-black'
-                : 'bg-emerald-50 text-emerald-800 border border-emerald-250 font-black'
+                ? 'bg-red-950 text-[#FDB813] font-black'
+                : 'bg-emerald-50 text-emerald-800 border border-emerald-300 font-black'
             }`}>
               {overallReadyRate}%
             </span>
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'governance' ? 'rotate-180' : 'text-slate-400'}`} />
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'governance' ? 'rotate-180 text-white' : 'text-slate-400'}`} />
           </button>
 
           {/* 3. أيقونة بيانات وتطابق الجداول */}
@@ -439,23 +439,23 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
             onClick={(e) => toggleMenu('table_data', e)}
             className={`h-8.5 px-3 text-xs flex items-center gap-1.5 transition-all cursor-pointer border rounded-xl shrink-0 ${
               activeMenu === 'table_data' || isDataViewFilterActive
-                ? 'bg-blue-600 text-white border-blue-700 font-black shadow-2xs'
-                : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-300 font-bold shadow-2xs'
+                ? 'bg-[#004B8D] text-white border-[#002855] font-black shadow-2xs'
+                : 'bg-white hover:bg-blue-50/50 text-[#002855] border-[#002855]/20 font-black shadow-2xs'
             }`}
             title="تطابق الجداول المتقاطعة وحالات أسطر الجدول (جديدة، مستوردة، مكررة، معدلة، غير معدلة)"
           >
-            <TableProperties className={`w-4 h-4 shrink-0 ${activeMenu === 'table_data' || isDataViewFilterActive ? 'text-amber-200' : 'text-blue-700'}`} />
+            <TableProperties className={`w-4 h-4 shrink-0 ${activeMenu === 'table_data' || isDataViewFilterActive ? 'text-[#FDB813]' : 'text-[#004B8D]'}`} />
             <span>بيانات وتطابق الجداول</span>
             {crossTableMatchesCount > 0 && (
               <span className={`font-mono text-[10px] px-1.5 py-0.2 rounded ${
                 activeMenu === 'table_data'
-                  ? 'bg-blue-700 text-white font-black'
+                  ? 'bg-[#002855] text-[#FDB813] font-black'
                   : 'bg-amber-50 text-amber-900 border border-amber-300 font-black'
               }`}>
                 {crossTableMatchesCount}
               </span>
             )}
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'table_data' ? 'rotate-180' : 'text-slate-400'}`} />
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'table_data' ? 'rotate-180 text-white' : 'text-slate-400'}`} />
           </button>
 
           {/* 4. أيقونة الفلترة والتصفية الذكية */}
@@ -465,14 +465,14 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
             onClick={(e) => toggleMenu('filter', e)}
             className={`h-8.5 px-3 text-xs flex items-center gap-1.5 transition-all cursor-pointer border rounded-xl shrink-0 ${
               activeMenu === 'filter' || smartQuickFilter !== 'all' || activeColumnFiltersCount > 0
-                ? 'bg-indigo-600 text-white border-indigo-700 font-black shadow-2xs'
-                : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-300 font-bold shadow-2xs'
+                ? 'bg-[#002855] text-white border-[#F58220] font-black shadow-2xs'
+                : 'bg-white hover:bg-blue-50/50 text-[#002855] border-[#002855]/20 font-black shadow-2xs'
             }`}
             title="التصفية السريعة للأوامر وفلاتر الأعمدة النشطة"
           >
-            <Filter className={`w-3.5 h-3.5 shrink-0 ${activeMenu === 'filter' || smartQuickFilter !== 'all' || activeColumnFiltersCount > 0 ? 'text-amber-200' : 'text-indigo-700'}`} />
+            <Filter className={`w-3.5 h-3.5 shrink-0 ${activeMenu === 'filter' || smartQuickFilter !== 'all' || activeColumnFiltersCount > 0 ? 'text-[#FDB813]' : 'text-[#F58220]'}`} />
             <span>{getFilterLabel()}</span>
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'filter' ? 'rotate-180' : 'text-slate-400'}`} />
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'filter' ? 'rotate-180 text-white' : 'text-slate-400'}`} />
           </button>
         </div>
 
@@ -486,21 +486,21 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
             onClick={(e) => toggleMenu('view_display', e)}
             className={`h-8.5 px-3 text-xs flex items-center gap-1.5 transition-all cursor-pointer border rounded-xl shrink-0 ${
               activeMenu === 'view_display'
-                ? 'bg-slate-800 text-white border-slate-900 font-black shadow-2xs'
-                : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-300 font-bold shadow-2xs'
+                ? 'bg-gradient-to-r from-[#002855] to-[#004B8D] text-white border-[#F58220] font-black shadow-xs ring-2 ring-[#F58220]/30'
+                : 'bg-white hover:bg-blue-50/70 text-[#002855] border-[#002855]/20 hover:border-[#004B8D]/40 font-black shadow-2xs'
             }`}
             title="إدارة الأعمدة والقوائم، خيارات العرض المرئي، التكبير والتصغير، تثبيت الأعمدة، وتلوين الصفوف"
           >
-            <SlidersHorizontal className={`w-3.5 h-3.5 shrink-0 ${activeMenu === 'view_display' ? 'text-amber-200' : 'text-slate-700'}`} />
+            <SlidersHorizontal className={`w-3.5 h-3.5 shrink-0 ${activeMenu === 'view_display' ? 'text-[#FDB813]' : 'text-[#004B8D]'}`} />
             <span>العرض والأعمدة</span>
             <span className={`font-mono text-[10px] px-1.5 py-0.2 rounded ${
               activeMenu === 'view_display'
-                ? 'bg-slate-700 text-white font-black'
-                : 'bg-slate-100 text-slate-700 border border-slate-300 font-black'
+                ? 'bg-[#F58220] text-white font-black'
+                : 'bg-[#002855]/10 text-[#002855] border border-[#002855]/20 font-black'
             }`}>
               {columnsCount}
             </span>
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'view_display' ? 'rotate-180' : 'text-slate-400'}`} />
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'view_display' ? 'rotate-180 text-[#FDB813]' : 'text-slate-400'}`} />
           </button>
 
           {/* 6. أيقونة التصدير والمشاركة والطباعة */}
@@ -510,14 +510,14 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
             onClick={(e) => toggleMenu('export', e)}
             className={`h-8.5 px-3 text-xs flex items-center gap-1.5 transition-all cursor-pointer border rounded-xl shrink-0 ${
               activeMenu === 'export'
-                ? 'bg-slate-800 text-white border-slate-900 font-black shadow-2xs'
-                : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-300 font-bold shadow-2xs'
+                ? 'bg-gradient-to-r from-[#002855] to-[#004B8D] text-white border-[#F58220] font-black shadow-xs ring-2 ring-[#F58220]/30'
+                : 'bg-white hover:bg-blue-50/70 text-[#002855] border-[#002855]/20 hover:border-[#004B8D]/40 font-black shadow-2xs'
             }`}
             title="تصدير شامل (Excel, PDF, PowerPoint, صور, CSV)، طباعة فورية، أو مشاركة بالإيميل"
           >
-            <FileDown className={`w-4 h-4 shrink-0 ${activeMenu === 'export' ? 'text-amber-200' : 'text-slate-700'}`} />
+            <FileDown className={`w-4 h-4 shrink-0 ${activeMenu === 'export' ? 'text-[#FDB813]' : 'text-[#F58220]'}`} />
             <span>التصدير والمشاركة</span>
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'export' ? 'rotate-180 text-white' : 'text-slate-400'}`} />
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'export' ? 'rotate-180 text-[#FDB813]' : 'text-slate-400'}`} />
           </button>
 
           {/* 7. أيقونة إدارة الجدول والأمان السحابي */}
@@ -527,22 +527,34 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
             onClick={(e) => toggleMenu('security', e)}
             className={`h-8.5 px-3 text-xs flex items-center gap-1.5 transition-all cursor-pointer border rounded-xl shrink-0 ${
               selectedOrderIdsCount > 0
-                ? 'bg-rose-700 text-white border-rose-800 font-black shadow-2xs'
+                ? 'bg-[#7F1D1D] text-white border-red-900 font-black shadow-xs ring-2 ring-red-500/30'
                 : activeMenu === 'security'
-                ? 'bg-slate-800 text-white border-slate-900 font-black shadow-2xs'
-                : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-300 font-bold shadow-2xs'
+                ? 'bg-gradient-to-r from-[#002855] to-[#004B8D] text-white border-[#F58220] font-black shadow-xs ring-2 ring-[#F58220]/30'
+                : 'bg-white hover:bg-blue-50/70 text-[#002855] border-[#002855]/20 hover:border-[#004B8D]/40 font-black shadow-2xs'
             }`}
             title="الأمان السحابي، تحديد السنة والشهر، وضع عرض البطاقة، وإدارة الحذف"
           >
-            <ShieldCheck className={`w-4 h-4 shrink-0 ${selectedOrderIdsCount > 0 ? 'text-white' : activeMenu === 'security' ? 'text-amber-200' : 'text-slate-700'}`} />
+            <ShieldCheck className={`w-4 h-4 shrink-0 ${selectedOrderIdsCount > 0 ? 'text-white' : activeMenu === 'security' ? 'text-[#FDB813]' : 'text-[#004B8D]'}`} />
             <span>الأمان وإدارة الجدول</span>
             {selectedOrderIdsCount > 0 && (
               <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-black/30 text-white font-black">
                 {selectedOrderIdsCount} محدد
               </span>
             )}
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'security' ? 'rotate-180' : 'text-slate-400'}`} />
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${activeMenu === 'security' ? 'rotate-180 text-[#FDB813]' : 'text-slate-400'}`} />
           </button>
+
+          {onCloseTable && (
+            <button
+              type="button"
+              onClick={onCloseTable}
+              className="h-8.5 px-2.5 text-xs flex items-center gap-1 transition-all cursor-pointer border rounded-xl shrink-0 bg-rose-50 hover:bg-[#7F1D1D] text-[#7F1D1D] hover:text-white border-rose-200 font-black shadow-2xs"
+              title="إغلاق وطي بطاقة الجدول"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span className="hidden xl:inline">إغلاق</span>
+            </button>
+          )}
 
         </div>
       </div>
@@ -588,7 +600,7 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
             <div
               ref={popoverMenuRef}
               style={getPopoverStyle(pos)}
-              className="bg-slate-900/98 backdrop-blur-xl border-2 border-slate-700 rounded-2xl shadow-2xl p-3 z-[999999] text-right space-y-2 animate-in fade-in zoom-in-95 duration-150 ring-4 ring-black/40 overflow-y-auto font-['Cairo',sans-serif]"
+              className="bg-gradient-to-b from-[#001D40] via-[#002855] to-[#001D40] backdrop-blur-xl border-2 border-[#F58220] rounded-2xl shadow-2xl p-3.5 z-[999999] text-right space-y-2 animate-in fade-in zoom-in-95 duration-150 ring-4 ring-[#002855]/50 overflow-y-auto font-['Cairo',sans-serif]"
               dir="rtl"
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
@@ -598,15 +610,15 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
                   ----------------------------------------------------------------- */}
               {activeMenu === 'operations' && (
                 <>
-                  <div className="flex items-center justify-between pb-2 mb-1 border-b border-slate-800">
-                    <span className="text-xs font-black text-cyan-300 flex items-center gap-1.5">
-                      <Layers className="w-4 h-4 text-cyan-400" />
+                  <div className="flex items-center justify-between pb-2 mb-1 border-b border-[#F58220]/40">
+                    <span className="text-xs font-black text-[#FDB813] flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-[#F58220]" />
                       <span>الإدخال والاستيراد والعمليات</span>
                     </span>
                     <button
                       type="button"
                       onClick={() => setActiveMenu(null)}
-                      className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                      className="p-1 rounded-lg text-blue-200 hover:text-white hover:bg-white/10 cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -643,6 +655,24 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
                         <span>استيراد أوامر العمل من ملف Excel</span>
                       </div>
                       <span className="text-[10px] text-slate-400 font-mono">.xlsx</span>
+                    </button>
+                  )}
+
+                  {/* استيراد متوافق بدلالة الأعمدة */}
+                  {onOpenCompatibleImport && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveMenu(null);
+                        onOpenCompatibleImport();
+                      }}
+                      className="w-full px-3 py-2 rounded-xl text-xs font-bold text-slate-100 bg-slate-800 hover:bg-cyan-600 hover:text-white flex items-center justify-between cursor-pointer transition-colors border border-slate-700"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Link2 className="w-4 h-4 text-cyan-400" />
+                        <span>استيراد من الجداول المتوافقة بدلالة الأعمدة</span>
+                      </div>
+                      <span className="text-[10px] text-cyan-300 font-mono">ذكي</span>
                     </button>
                   )}
 
@@ -710,6 +740,26 @@ export const TableSmartToolbar: React.FC<TableSmartToolbarProps> = ({
                   </div>
 
 
+
+                  {/* الفحص الذكي لمعايير 155 */}
+                  {onOpenSmartAudit && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveMenu(null);
+                        onOpenSmartAudit();
+                      }}
+                      className="w-full px-3 py-2 rounded-xl text-xs font-bold text-amber-200 bg-amber-950/60 hover:bg-amber-600 hover:text-white flex items-center justify-between cursor-pointer transition-colors border border-amber-500/30"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-amber-400" />
+                        <span>تدقيق وفحص معايير 155 للأمر المحدد</span>
+                      </div>
+                      <span className="font-mono text-[10px] bg-black/40 px-1.5 py-0.5 rounded text-amber-300">
+                        فحص 155
+                      </span>
+                    </button>
+                  )}
 
                   {/* اعتماد جماعي لمؤهل 155 */}
                   {onBulkApprove155 && (

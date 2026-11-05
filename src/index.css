@@ -220,6 +220,8 @@ body {
   border-collapse: separate !important;
   border-spacing: 0 !important;
   font-weight: 700 !important;
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
 }
 
 .sec-bold-table th {
@@ -228,6 +230,7 @@ body {
   border-right: 1px solid #cbd5e1 !important;
   border-left: 1px solid #cbd5e1 !important;
   letter-spacing: 0.01em;
+  background-clip: padding-box;
 }
 
 .sec-bold-table td {
@@ -235,6 +238,7 @@ body {
   border-bottom: 1.5px solid #cbd5e1 !important;
   border-right: 1px solid #cbd5e1 !important;
   border-left: 1px solid #e2e8f0 !important;
+  background-clip: padding-box;
 }
 
 .sec-bold-table tbody tr:hover td {
@@ -251,6 +255,13 @@ body {
   border-left: 2px solid #94a3b8 !important;
 }
 
+.sec-bold-table th.sticky,
+.sec-bold-table td.sticky {
+  position: sticky;
+  z-index: 10;
+  background-color: inherit;
+}
+
 .sec-bold-table input,
 .sec-bold-table button,
 .sec-bold-table span,
@@ -258,4 +269,82 @@ body {
   font-weight: 700;
 }
 
+/* =========================================================================
+   Urgent Alert List Indicator Animations (مهتزة بشكل تنبيهي فعلي وصحيح)
+   ========================================================================= */
 
+@keyframes urgent-alert-shake {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+  }
+  6% {
+    transform: translate3d(-3px, -1px, 0) rotate(-1.5deg) scale(1.015);
+  }
+  12% {
+    transform: translate3d(3px, 1px, 0) rotate(1.5deg) scale(1.02);
+  }
+  18% {
+    transform: translate3d(-3px, 0, 0) rotate(-1.2deg) scale(1.015);
+  }
+  24% {
+    transform: translate3d(3px, -1px, 0) rotate(1.2deg) scale(1.015);
+  }
+  30% {
+    transform: translate3d(-2px, 1px, 0) rotate(-0.8deg) scale(1.01);
+  }
+  36% {
+    transform: translate3d(2px, 0, 0) rotate(0.8deg) scale(1.005);
+  }
+  42% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+  }
+}
+
+@keyframes urgent-bell-ring {
+  0%, 100% {
+    transform: rotate(0deg) scale(1);
+  }
+  10% {
+    transform: rotate(16deg) scale(1.12);
+  }
+  20% {
+    transform: rotate(-14deg) scale(1.12);
+  }
+  30% {
+    transform: rotate(12deg) scale(1.08);
+  }
+  40% {
+    transform: rotate(-10deg) scale(1.06);
+  }
+  50% {
+    transform: rotate(6deg) scale(1.03);
+  }
+  60% {
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+@keyframes urgent-glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.65), 0 8px 22px -4px rgba(225, 29, 72, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(245, 130, 32, 0), 0 12px 28px -2px rgba(245, 130, 32, 0.65);
+  }
+}
+
+.animate-urgent-shake {
+  animation: urgent-alert-shake 2.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) infinite,
+             urgent-glow-pulse 2s ease-in-out infinite;
+  will-change: transform, box-shadow;
+}
+
+.animate-urgent-shake:hover {
+  animation-play-state: paused;
+}
+
+.animate-urgent-bell {
+  animation: urgent-bell-ring 1.8s ease-in-out infinite;
+  transform-origin: top center;
+  will-change: transform;
+}

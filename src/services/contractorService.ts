@@ -1,4 +1,4 @@
-import { SubOffice } from '../types';
+import type { SubOffice } from '../types.ts';
 
 /**
  * Default contractor mappings per office as specified by Procedure 155 compliance requirements:

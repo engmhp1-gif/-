@@ -1,8 +1,8 @@
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
-import { WorkOrder, ColumnDefinition, DropdownOptionsMap } from '../types';
-import { formatWorkOrderTypeValue, hasValidWorkOrderTypeNumbers, WORK_ORDER_TYPE_OPTIONS } from '../utils/workOrderType';
-import { extractBackupEnvelope } from '../utils/backupMergeEngine';
+import type { WorkOrder, ColumnDefinition, DropdownOptionsMap } from '../types.ts';
+import { formatWorkOrderTypeValue, hasValidWorkOrderTypeNumbers, WORK_ORDER_TYPE_OPTIONS } from '../utils/workOrderType.ts';
+import { extractBackupEnvelope } from '../utils/backupMergeEngine.ts';
 
 export interface DetectedColumnInfo {
   headerName: string;
@@ -866,35 +866,96 @@ const KNOWN_FIELD_RULES: FieldRule[] = [
     title: 'الأولوية',
     aliases: ['الأولوية', 'الاولوية', 'اولويه', 'priority'],
     priority: 3
+  },
+  {
+    field: 'pdcAudit',
+    title: 'تدقيق PDC',
+    aliases: ['تدقيقpdc', 'pdc', 'pdcaudit', 'pdc_audit', 'حالةتدقيقpdc', 'تقييمpdc'],
+    priority: 10
+  },
+  {
+    field: 'constructionAudit',
+    title: 'تدقيق الإنشاءات',
+    aliases: ['تدقيقالانشاءات', 'تدقيقالإنشاءات', 'الانشاءات', 'الإنشاءات', 'constructionaudit', 'construction_audit', 'حالةتدقيقالانشاءات'],
+    priority: 10
+  },
+  {
+    field: 'technicalSupportAudit',
+    title: 'تدقيق المساندة الفنية',
+    aliases: ['تدقيقالمساندةالفنية', 'تدقيقالمساندهالفنيه', 'المساندةالفنية', 'المساندهالفنيه', 'technicalsupportaudit', 'technical_support_audit'],
+    priority: 9
+  },
+  {
+    field: 'tableName',
+    title: 'اسم الجدول',
+    aliases: ['اسمالجدول', 'الجدول', 'جدولالشهر', 'tablename', 'table_name'],
+    priority: 6
+  },
+  {
+    field: 'tableYear',
+    title: 'سنة الجدول',
+    aliases: ['سنةالجدول', 'سنهالجدول', 'السنة', 'السنه', 'tableyear', 'table_year', 'year'],
+    priority: 5
+  },
+  {
+    field: 'tableMonth',
+    title: 'شهر الجدول',
+    aliases: ['شهرالجدول', 'الشهر', 'tablemonth', 'table_month', 'month'],
+    priority: 5
+  },
+  {
+    field: 'tableId',
+    title: 'معرف الجدول',
+    aliases: ['معرفالجدول', 'كودالجدول', 'tableid', 'table_id'],
+    priority: 6
+  },
+  {
+    field: 'id',
+    title: 'معرف السجل',
+    aliases: ['معرفالسجل', 'معرفالامر', 'recordid', 'record_id'],
+    priority: 6
   }
 ];
 
+export const ALLOWED_PLATFORM_IMPORT_FIELDS = new Set<string>([
+  'office',
+  'contractor',
+  'consultant',
+  'workOrderNumber',
+  'workOrderCode',
+  'photosFile',
+  'attachmentStatus',
+  'qualityNotes',
+  'pdcAudit',
+  'constructionAudit',
+  'procedure155Status',
+  'statusSyncTime',
+  'procedure155',
+  'procedureSyncTime',
+  'receiptDate',
+  'tableName',
+  'tableYear',
+  'tableMonth',
+  'tableId',
+  'id'
+]);
+
 export const IMPORTABLE_STANDARD_FIELDS = [
-  { field: 'office', title: 'المكتب' },
-  { field: 'contractor', title: 'المقاول' },
-  { field: 'consultant', title: 'الاستشاري' },
-  { field: 'workOrderNumber', title: 'رقم أمر العمل' },
-  { field: 'workOrderCode', title: 'نوع أمر العمل' },
-  { field: 'receiptDate', title: 'تاريخ الاستلام' },
-  { field: 'attachmentStatus', title: 'حالة الارفاق' },
-  { field: 'photoDocumentation', title: 'توثيق الصور' },
-  { field: 'consultantForms', title: 'نماذج الاستشاري' },
-  { field: 'consultantClearanceForms', title: 'نماذج إجازة الاستشاري' },
-  { field: 'form190', title: 'نموذج 190' },
-  { field: 'form200', title: 'نموذج 200' },
-  { field: 'inspectionForm', title: 'نموذج الفحص' },
-  { field: 'qualityNotes', title: 'ملاحظات الجودة' },
-  { field: 'procedure155Status', title: 'حالة أمر العمل' },
-  { field: 'statusSyncTime', title: 'مزامنة الحالة' },
-  { field: 'procedure155', title: 'اجراء 155' },
-  { field: 'procedureSyncTime', title: 'مزامنة الاجراء' },
-  { field: 'executionStatus', title: 'حالة التنفيذ' },
-  { field: 'boqModification', title: 'تعديل المقايسة' },
-  { field: 'executionNotes', title: 'ملاحظات التنفيذ' },
-  { field: 'completionPercentage', title: 'نسبة الإنجاز' },
-  { field: 'inspectorName', title: 'اسم المفتش' },
-  { field: 'priority', title: 'الأولوية' },
-  { field: '_skip_', title: '🚫 تجاهل وعدم الاستيراد' }
+  { field: 'office', title: '1. المكتب' },
+  { field: 'contractor', title: '2. المقاول' },
+  { field: 'consultant', title: '3. الاستشاري' },
+  { field: 'workOrderNumber', title: '4. رقم أمر العمل' },
+  { field: 'workOrderCode', title: '5. رمز أمر العمل' },
+  { field: 'photosFile', title: '6. ملف الصور (SharePoint)' },
+  { field: 'attachmentStatus', title: '7. حالة الإرفاق' },
+  { field: 'qualityNotes', title: '8. ملاحظات الجودة' },
+  { field: 'pdcAudit', title: '9. تدقيق PDC' },
+  { field: 'constructionAudit', title: '10. تدقيق الإنشاءات' },
+  { field: 'procedure155Status', title: '11. تدقيق المساندة الفنية' },
+  { field: 'statusSyncTime', title: '12. وقت وتاريخ التدقيق' },
+  { field: 'procedure155', title: '13. إجراء 155 النهائي' },
+  { field: 'procedureSyncTime', title: '14. وقت اعتماد 155' },
+  { field: '_skip_', title: '🚫 تجاهل وعدم الاستيراد (عمود غير موجود بالمنصة)' }
 ];
 
 /**
@@ -1181,24 +1242,12 @@ export const detectUniversalColumns = (
       }
     }
 
-    // If marked as row sequence counter, mark as skip so it is never confused for work order number
-    if (matchedField === '_sequence_skip_') {
+    // If marked as row sequence counter or not in the platform's canonical columns, mark as _skip_
+    // Never import any new or unrecognized columns from Excel files!
+    if (matchedField === '_sequence_skip_' || !matchedField || !ALLOWED_PLATFORM_IMPORT_FIELDS.has(matchedField)) {
       matchedField = '_skip_';
-      fieldTitle = 'م (تسلسل)';
+      fieldTitle = '🚫 تجاهل (عمود غير موجود بالمنصة)';
       isCustom = false;
-    }
-
-    // If completely unmatched: treat as a dynamic discovered column so data is NEVER lost!
-    if (!matchedField) {
-      isCustom = true;
-      const safeKey = `col_custom_${c + 1}_${Date.now().toString(36).slice(-4)}`;
-      matchedField = safeKey;
-      fieldTitle = effectiveHeader;
-      discoveredNewColumns.push({
-        title: effectiveHeader,
-        field: safeKey
-      });
-      assignedFields.add(safeKey);
     }
 
     mappedColumns.push({
@@ -1206,7 +1255,7 @@ export const detectUniversalColumns = (
       headerName: effectiveHeader,
       matchedField,
       fieldTitle,
-      isCustom
+      isCustom: false
     });
   }
 
@@ -1266,8 +1315,8 @@ export const detectUniversalColumns = (
   if (targetWocCol) {
     mappedColumns.forEach(m => {
       if (m.matchedField === 'workOrderCode' && m.colIndex !== targetWocCol!.colIndex) {
-        m.matchedField = `col_custom_${m.colIndex + 1}_${Date.now().toString(36).slice(-4)}`;
-        m.isCustom = true;
+        m.matchedField = '_skip_';
+        m.isCustom = false;
       }
     });
 
@@ -1290,13 +1339,63 @@ export const detectUniversalColumns = (
 export const extractOrdersFromRawRows = (
   rawRows: any[][],
   dataStartIndex: number,
-  mappedColumns: { colIndex: number; matchedField: string }[]
+  mappedColumns: { colIndex: number; matchedField: string }[],
+  sheetContext?: { sheetName?: string; defaultOffice?: string; defaultTableName?: string }
 ): {
   validOrders: Partial<WorkOrder>[];
   skippedCount: number;
 } => {
   const validOrders: Partial<WorkOrder>[] = [];
   let skippedCount = 0;
+
+  // Infer office or table name from sheetName if provided
+  let inferredSheetOffice: string | undefined = sheetContext?.defaultOffice;
+  let inferredSheetTableName: string | undefined = sheetContext?.defaultTableName;
+  if (sheetContext?.sheetName) {
+    const sNorm = normalizeHeader(sheetContext.sheetName);
+    if (
+      sNorm.includes('عرعر') ||
+      sNorm.includes('طريف') ||
+      sNorm.includes('رفحا') ||
+      sNorm.includes('عويقيل') ||
+      sNorm.includes('قريات') ||
+      sNorm.includes('سكاكا') ||
+      sNorm.startsWith('مكتب')
+    ) {
+      inferredSheetOffice = normalizeOfficeName(sheetContext.sheetName);
+    } else if (
+      !sNorm.includes('sheet') &&
+      !sNorm.includes('ورقه') &&
+      !sNorm.includes('اوامرالعمل') &&
+      sheetContext.sheetName.trim().length > 1
+    ) {
+      inferredSheetTableName = sheetContext.sheetName.trim();
+    }
+  }
+
+  const normalizeImportedAuditCell = (val: string) => {
+    if (!val) return undefined;
+    if (val.startsWith('{') && val.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(val);
+        if (parsed && typeof parsed === 'object') return parsed;
+      } catch {}
+    }
+    const norm = normalizeHeader(val);
+    let mainStatus = val;
+    if (norm.includes('غيرمؤهل') || norm.includes('مرفوض')) {
+      mainStatus = 'غير مؤهل';
+    } else if (norm.includes('مؤهل') || norm.includes('معتمد') || norm.includes('مكتمل')) {
+      mainStatus = 'مؤهل';
+    } else if (norm.includes('قيد') || norm.includes('تدقيق')) {
+      mainStatus = 'قيد التدقيق';
+    }
+    return {
+      mainStatus,
+      supportChecklist: {},
+      evaluatedKeys: []
+    };
+  };
 
   for (let r = dataStartIndex; r < rawRows.length; r++) {
     const row = rawRows[r];
@@ -1322,8 +1421,10 @@ export const extractOrdersFromRawRows = (
       const rawCellVal = colMap.colIndex < row.length ? cleanCellValue(row[colMap.colIndex]) : '';
       const field = colMap.matchedField;
 
-      if (field === 'office') {
-        orderData.office = normalizeOfficeName(rawCellVal);
+      if (field === 'id') {
+        if (rawCellVal) orderData.id = rawCellVal;
+      } else if (field === 'office') {
+        if (rawCellVal) orderData.office = normalizeOfficeName(rawCellVal);
       } else if (field === 'contractor') {
         orderData.contractor = rawCellVal || 'المقاول الرئيسي المعتمد';
       } else if (field === 'consultant') {
@@ -1334,6 +1435,21 @@ export const extractOrdersFromRawRows = (
         orderData.workOrderCode = formatWorkOrderTypeValue(rawCellVal);
       } else if (field === 'receiptDate') {
         orderData.receiptDate = parseExcelDate(rawCellVal);
+      } else if (field === 'tableId') {
+        if (rawCellVal) orderData.tableId = rawCellVal;
+      } else if (field === 'tableName') {
+        if (rawCellVal) orderData.tableName = rawCellVal;
+      } else if (field === 'tableYear') {
+        const y = parseInt(rawCellVal, 10);
+        if (Number.isFinite(y) && y >= 2000 && y <= 2100) orderData.tableYear = y;
+      } else if (field === 'tableMonth') {
+        const m = parseInt(rawCellVal, 10);
+        if (Number.isFinite(m) && m >= 1 && m <= 12) orderData.tableMonth = m;
+      } else if (field === 'pdcAudit' || field === 'constructionAudit' || field === 'technicalSupportAudit') {
+        const auditObj = normalizeImportedAuditCell(rawCellVal);
+        if (auditObj) {
+          (orderData as any)[field] = auditObj;
+        }
       } else if (
         field === 'attachmentStatus' ||
         field === 'photoDocumentation' ||
@@ -1350,18 +1466,20 @@ export const extractOrdersFromRawRows = (
           (orderData as any)[field] = normalizeStatusValue(rawCellVal, field);
         }
       } else if (field === 'qualityNotes' || field === 'executionNotes') {
-        (orderData as any)[field] = rawCellVal;
-      } else {
+        orderData.qualityNotes = rawCellVal;
+      } else if (field === 'procedure155' || field === 'statusSyncTime' || field === 'procedureSyncTime') {
         if (rawCellVal) {
           (orderData as any)[field] = rawCellVal;
-          if (!orderData.customFields) orderData.customFields = {};
-          orderData.customFields[field] = rawCellVal;
         }
       }
     });
 
     if (!orderData.office) {
-      orderData.office = 'مكتب عرعر';
+      orderData.office = inferredSheetOffice || 'مكتب عرعر';
+    }
+
+    if (!orderData.tableName && inferredSheetTableName) {
+      orderData.tableName = inferredSheetTableName;
     }
 
     if (!orderData.contractor) {
@@ -1409,16 +1527,20 @@ export const extractOrdersFromRawRows = (
       orderData.receiptDate = new Date().toISOString().slice(0, 10);
     }
 
-    if (!orderData.attachmentStatus) orderData.attachmentStatus = 'غير جاهز للارفاق';
-    if (!orderData.photoDocumentation) orderData.photoDocumentation = 'غير مكتمل';
-    if (!orderData.consultantForms) orderData.consultantForms = 'غير مكتمل';
-    if (!orderData.consultantClearanceForms) orderData.consultantClearanceForms = 'غير مكتمل';
-    if (!orderData.form190) orderData.form190 = 'غير مكتمل';
-    if (!orderData.form200) orderData.form200 = 'غير مكتمل';
-    if (!orderData.inspectionForm) orderData.inspectionForm = 'غير مكتمل';
-    if (!orderData.procedure155Status) orderData.procedure155Status = 'غير مؤهل للاغلاق';
-    if (!orderData.executionStatus) orderData.executionStatus = 'قيد التدقيق';
-    if (!orderData.boqModification) orderData.boqModification = 'مطابق للمقايسة المعتمدة';
+    if (orderData.attachmentStatus === undefined) orderData.attachmentStatus = '' as any;
+    if (orderData.photoDocumentation === undefined) orderData.photoDocumentation = '' as any;
+    if (orderData.consultantForms === undefined) orderData.consultantForms = '' as any;
+    if (orderData.consultantClearanceForms === undefined) orderData.consultantClearanceForms = '' as any;
+    if (orderData.form190 === undefined) orderData.form190 = '' as any;
+    if (orderData.form200 === undefined) orderData.form200 = '' as any;
+    if (orderData.inspectionForm === undefined) orderData.inspectionForm = '' as any;
+    if (orderData.qualityNotes === undefined) orderData.qualityNotes = '';
+    if (orderData.procedure155Status === undefined) orderData.procedure155Status = '' as any;
+    if (orderData.statusSyncTime === undefined) orderData.statusSyncTime = '';
+    if (orderData.procedure155 === undefined) orderData.procedure155 = '';
+    if (orderData.procedureSyncTime === undefined) orderData.procedureSyncTime = '';
+    if (orderData.executionStatus === undefined) orderData.executionStatus = '' as any;
+    if (orderData.boqModification === undefined) orderData.boqModification = '' as any;
 
     validOrders.push(orderData);
   }
@@ -1581,21 +1703,45 @@ export const parseWorkOrderExcelFile = async (
           return;
         }
 
-        // Universal Column Detection covering ALL columns
+        // Universal Column Detection covering ALL columns on the primary sheet
         const { headerRowIndex, mappedColumns, discoveredNewColumns } = detectUniversalColumns(rawRows, customColumns);
         const dataStartIndex = headerRowIndex + 1;
 
         const errors: string[] = [];
 
-        // Column stats counter
-        const colStatsMap = new Map<string, { count: number; sample?: string }>();
-        mappedColumns.forEach(m => colStatsMap.set(m.matchedField, { count: 0 }));
+        // Extract orders from ALL non-empty sheets in the workbook so multi-sheet Excel files lose zero rows
+        const allValidOrders: Partial<WorkOrder>[] = [];
+        let totalSkippedCount = 0;
+        let totalDataRowsCount = 0;
 
-        const { validOrders, skippedCount } = extractOrdersFromRawRows(
-          rawRows,
-          dataStartIndex,
-          mappedColumns.map(m => ({ colIndex: m.colIndex, matchedField: m.matchedField }))
-        );
+        for (const sName of workbook.SheetNames) {
+          const sObj = workbook.Sheets[sName];
+          if (!sObj) continue;
+          const sRows: any[][] = sName === bestSheetName
+            ? rawRows
+            : XLSX.utils.sheet_to_json(sObj, { header: 1, blankrows: false, defval: '' });
+          if (!Array.isArray(sRows) || sRows.length <= 1) continue;
+
+          const sDet = sName === bestSheetName
+            ? { headerRowIndex, mappedColumns, discoveredNewColumns }
+            : detectUniversalColumns(sRows, customColumns);
+          const sStart = sDet.headerRowIndex + 1;
+          totalDataRowsCount += Math.max(0, sRows.length - sStart);
+
+          const { validOrders: sheetOrders, skippedCount: sheetSkipped } = extractOrdersFromRawRows(
+            sRows,
+            sStart,
+            sDet.mappedColumns.map(m => ({ colIndex: m.colIndex, matchedField: m.matchedField })),
+            { sheetName: workbook.SheetNames.length > 1 ? sName : undefined }
+          );
+          allValidOrders.push(...sheetOrders);
+          totalSkippedCount += sheetSkipped;
+          for (const dCol of sDet.discoveredNewColumns) {
+            if (!discoveredNewColumns.some(existing => existing.field === dCol.field || existing.title === dCol.title)) {
+              discoveredNewColumns.push(dCol);
+            }
+          }
+        }
 
         // Build comprehensive detected columns list with counts
         const allDetectedColumns: DetectedColumnInfo[] = mappedColumns.map(m => {
@@ -1628,11 +1774,11 @@ export const parseWorkOrderExcelFile = async (
         });
 
         resolve({
-          success: validOrders.length > 0,
-          orders: validOrders,
-          totalRows: rawRows.length - dataStartIndex,
-          validRows: validOrders.length,
-          skippedRows: skippedCount,
+          success: allValidOrders.length > 0,
+          orders: allValidOrders,
+          totalRows: totalDataRowsCount,
+          validRows: allValidOrders.length,
+          skippedRows: totalSkippedCount,
           errors,
           detectedColumns: detectedColumnsMap,
           allDetectedColumns,

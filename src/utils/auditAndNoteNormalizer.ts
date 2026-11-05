@@ -99,6 +99,9 @@ export function applyServerVerifiedAuditAndNoteMetadata(
     }
     return {
       mainStatus: safe.mainStatus || 'غير محدد',
+      supportChecklist: safe.supportChecklist || {},
+      evaluatedKeys: Array.isArray(safe.evaluatedKeys) ? [...safe.evaluatedKeys].sort() : [],
+      compliancePercentage: safe.compliancePercentage,
       categories: categoriesSnapshot,
       finalVerification: safe.finalVerification?.status
     };
@@ -106,7 +109,9 @@ export function applyServerVerifiedAuditAndNoteMetadata(
 
   const hasMeaningfulAuditInput = (auditObj?: WorkOrderAuditColumnData): boolean => {
     const safe = sanitizeAuditObject(auditObj);
-    if (safe.mainStatus && safe.mainStatus !== 'غير محدد') return true;
+    if (safe.mainStatus && safe.mainStatus !== 'غير محدد' && safe.mainStatus !== 'قيد التدقيق') return true;
+    if (Array.isArray(safe.evaluatedKeys) && safe.evaluatedKeys.length > 0) return true;
+    if (safe.supportChecklist && Object.keys(safe.supportChecklist).length > 0 && Array.isArray(safe.evaluatedKeys) && safe.evaluatedKeys.length > 0) return true;
     if (safe.finalVerification?.status && safe.finalVerification.status !== 'قيد التدقيق') return true;
     for (const key of ALL_18_CATEGORY_KEYS) {
       const cat = safe[key];
@@ -221,9 +226,10 @@ export function applyServerVerifiedAuditAndNoteMetadata(
 
   // 3. Check تدقيق المساندة الفنية (procedure155Status) independently
   if (incomingOrder.procedure155Status !== undefined) {
-    const prevStatus = String(existingOrder?.procedure155Status || '');
-    const nextStatus = String(incomingOrder.procedure155Status || '');
-    const tsChanged = existingOrder ? prevStatus !== nextStatus : Boolean(nextStatus);
+    const prevStatus = String(existingOrder?.procedure155Status || '').trim();
+    const nextStatus = String(incomingOrder.procedure155Status || '').trim();
+    const isMeaningfulTsStatus = nextStatus !== '' && nextStatus !== 'قيد التدقيق' && nextStatus !== 'غير محدد';
+    const tsChanged = existingOrder ? prevStatus !== nextStatus : isMeaningfulTsStatus;
     if (tsChanged) {
       anyAuditColumnChanged = true;
       result.technicalSupportAudit = {

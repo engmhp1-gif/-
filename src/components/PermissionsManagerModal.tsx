@@ -20,7 +20,15 @@ import {
   KeyRound,
   Save,
   RefreshCw,
-  Crown
+  Crown,
+  LayoutGrid,
+  TableProperties,
+  ListChecks,
+  BarChart3,
+  Building2,
+  Settings,
+  Columns3,
+  Search
 } from 'lucide-react';
 import { PlatformUser, UserPermissions, ColumnDefinition } from '../types';
 import {
@@ -29,13 +37,15 @@ import {
   FULL_PERMISSIONS,
   EMPTY_PERMISSIONS,
   PERMISSION_DEFINITIONS,
+  PermissionCategoryId,
   getMergedTableColumnsForPermissions,
   ensureDefaultSuperAdmins,
   isSuperAdminEmail,
   isPurgedLegacyUserOrEmail,
   PRIMARY_SUPER_ADMIN_NAME,
   PRIMARY_SUPER_ADMIN_ROLE_TITLE,
-  normalizeMahmoudRoleTitle
+  normalizeMahmoudRoleTitle,
+  synchronizeUserPermissionsWithPlatformUpdates
 } from '../utils/security';
 
 interface PermissionsManagerModalProps {
@@ -48,6 +58,47 @@ interface PermissionsManagerModalProps {
   onDeleteUser: (userId: string) => Promise<void>;
   onShowToast?: (msg: string, type?: 'create' | 'update' | 'delete') => void;
 }
+
+const DEFAULT_NEW_USER_PERMISSIONS: UserPermissions = {
+  ...EMPTY_PERMISSIONS,
+  // 1. Sidebar Tabs (open by default except system settings)
+  tabHome: true,
+  tabWorkOrders: true,
+  tabKpis: true,
+  tabQualityGuide: true,
+  tabAuditHub: true,
+  tabOffices: true,
+  tabContractors: true,
+  tabArchive: true,
+  tabReports: true,
+  tabDocuments: true,
+  tabSettings: false,
+  // 2. Table Tools
+  addWorkOrder: true,
+  editWorkOrderBasic: true,
+  editWorkOrderStatus: true,
+  inlineTableEdit: true,
+  uploadInspectionFiles: true,
+  viewPhotos: true,
+  searchAndFilter: true,
+  deleteWorkOrder: false,
+  // 3. Audit 155
+  auditPdcColumn: true,
+  auditConstructionColumn: true,
+  auditTechnicalSupportColumn: true,
+  editProcedure155: false,
+  smartAudit: true,
+  manageArchive155: true,
+  // 4. Reports & KPIs
+  viewKpiDashboard: true,
+  viewComprehensiveReports: true,
+  viewWeeklyReport: true,
+  viewOfficeComparison: true,
+  viewContractorClosureReport: true,
+  viewNotesReport: true,
+  viewArchive: true,
+  exportTable: true
+};
 
 export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = ({
   isOpen,
@@ -67,6 +118,8 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
 
   const [activeTab, setActiveTab] = useState<'create_edit' | 'users_list'>('create_edit');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [permSearchQuery, setPermSearchQuery] = useState<string>('');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<PermissionCategoryId | 'all' | 'columns'>('all');
 
   const authorizerEmails = useMemo(() => {
     const list = [...SUPER_ADMIN_EMAILS];
@@ -87,22 +140,7 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
   const [roleTitle, setRoleTitle] = useState('مدقق جودة وأوامر عمل');
   const [isActive, setIsActive] = useState(true);
   const [permissions, setPermissions] = useState<UserPermissions>({
-    ...EMPTY_PERMISSIONS,
-    addWorkOrder: true,
-    editWorkOrderStatus: true,
-    inlineTableEdit: true,
-    auditPdcColumn: true,
-    auditConstructionColumn: true,
-    auditTechnicalSupportColumn: true,
-    uploadInspectionFiles: true,
-    exportTable: true,
-    searchAndFilter: true,
-    viewKpiDashboard: true,
-    viewComprehensiveReports: true,
-    viewNotesReport: true,
-    viewContractorClosureReport: true,
-    viewWeeklyReport: true,
-    viewOfficeComparison: true
+    ...DEFAULT_NEW_USER_PERMISSIONS
   });
   const [allowedColumns, setAllowedColumns] = useState<string[]>(() =>
     getMergedTableColumnsForPermissions(columns)
@@ -111,7 +149,6 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
   );
 
   const [showPassInForm, setShowPassInForm] = useState(true);
-  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
@@ -128,23 +165,7 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
     setRoleTitle('مدقق جودة وأوامر عمل');
     setIsActive(true);
     setPermissions({
-      ...EMPTY_PERMISSIONS,
-      addWorkOrder: true,
-      editWorkOrderStatus: true,
-      inlineTableEdit: true,
-      auditPdcColumn: true,
-      auditConstructionColumn: true,
-      auditTechnicalSupportColumn: true,
-      editProcedure155: false,
-      uploadInspectionFiles: true,
-      exportTable: true,
-      searchAndFilter: true,
-      viewKpiDashboard: true,
-      viewComprehensiveReports: true,
-      viewNotesReport: true,
-      viewContractorClosureReport: true,
-      viewWeeklyReport: true,
-      viewOfficeComparison: true
+      ...DEFAULT_NEW_USER_PERMISSIONS
     });
     setAllowedColumns(
       dynamicTableColumns
@@ -157,25 +178,24 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
 
   const handleLoadUserToEdit = (u: PlatformUser) => {
     const isPrimarySuper = Boolean(isSuperAdminEmail(u.email) || u.username === SUPER_ADMIN_USERNAME);
-    const hasProc155Perm = isPrimarySuper || Boolean(u.permissions?.editProcedure155);
-    setEditingUserId(u.id);
-    setUserEmail(u.email || '');
-    setUsername(u.username || '');
+    const syncdUser = synchronizeUserPermissionsWithPlatformUpdates(u);
+    const hasProc155Perm = isPrimarySuper || Boolean(syncdUser.permissions?.editProcedure155);
+    setEditingUserId(syncdUser.id);
+    setUserEmail(syncdUser.email || '');
+    setUsername(syncdUser.username || '');
     setPassword('');
-    setDisplayName(u.displayName || '');
-    setRoleTitle(u.roleTitle || 'مستخدم معتمد');
-    setIsActive(u.isActive !== false);
+    setDisplayName(syncdUser.displayName || '');
+    setRoleTitle(syncdUser.roleTitle || 'مستخدم معتمد');
+    setIsActive(syncdUser.isActive !== false);
     setPermissions(
       isPrimarySuper
         ? { ...FULL_PERMISSIONS }
-        : { ...EMPTY_PERMISSIONS, ...(u.permissions || {}), editProcedure155: hasProc155Perm }
+        : { ...EMPTY_PERMISSIONS, ...(syncdUser.permissions || {}), editProcedure155: hasProc155Perm }
     );
-    // Load allowed columns and synchronize procedure155 strictly with editProcedure155 permission
-    const userCols = u.allowedColumns || u.permissions?.allowedColumns;
-    const baseCols =
-      Array.isArray(userCols)
-        ? [...userCols]
-        : dynamicTableColumns.map((c) => c.field);
+    const userCols = syncdUser.allowedColumns || syncdUser.permissions?.allowedColumns;
+    const baseCols = Array.isArray(userCols)
+      ? userCols.filter((f) => f !== 'executionStatus')
+      : dynamicTableColumns.map((c) => c.field);
     const syncedCols = hasProc155Perm
       ? Array.from(new Set([...baseCols, 'procedure155']))
       : baseCols.filter((f) => f !== 'procedure155');
@@ -191,6 +211,18 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
       if (field === 'procedure155') {
         setPermissions((p) => ({ ...p, editProcedure155: willEnable }));
       }
+      if (field === 'pdcAudit') {
+        setPermissions((p) => ({ ...p, auditPdcColumn: willEnable }));
+      }
+      if (field === 'constructionAudit') {
+        setPermissions((p) => ({ ...p, auditConstructionColumn: willEnable }));
+      }
+      if (field === 'procedure155Status') {
+        setPermissions((p) => ({ ...p, auditTechnicalSupportColumn: willEnable }));
+      }
+      if (field === 'photosFile') {
+        setPermissions((p) => ({ ...p, uploadInspectionFiles: willEnable }));
+      }
       if (!willEnable) {
         return prev.filter((f) => f !== field);
       } else {
@@ -202,9 +234,15 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
   const handleSelectAllColumns = (selectAll: boolean) => {
     if (selectAll) {
       setAllowedColumns(dynamicTableColumns.map((c) => c.field));
-      setPermissions((prev) => ({ ...prev, editProcedure155: true }));
+      setPermissions((prev) => ({
+        ...prev,
+        editProcedure155: true,
+        auditPdcColumn: true,
+        auditConstructionColumn: true,
+        auditTechnicalSupportColumn: true,
+        uploadInspectionFiles: true
+      }));
     } else {
-      // Keep universally editable columns (qualityNotes)
       setAllowedColumns(dynamicTableColumns.filter((c) => c.isUniversallyEditable).map((c) => c.field));
       setPermissions((prev) => ({ ...prev, editProcedure155: false }));
     }
@@ -212,24 +250,41 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
 
   const handleTogglePermission = (key: keyof UserPermissions) => {
     if (isSuperAdminEmail(userEmail)) {
-      // Super admin emails always have full permissions
       setPermissions({ ...FULL_PERMISSIONS });
       setAllowedColumns(dynamicTableColumns.map((c) => c.field));
       return;
     }
     setPermissions((prev) => {
       const nextVal = !prev[key];
-      if (key === 'editProcedure155') {
-        setAllowedColumns((cols) =>
-          nextVal
-            ? Array.from(new Set([...cols, 'procedure155']))
-            : cols.filter((f) => f !== 'procedure155')
-        );
-      }
-      return {
+      const nextPerms: UserPermissions = {
         ...prev,
         [key]: nextVal
       };
+
+      // Bidirectional sync between KPI tab and KPI dashboard permission
+      if (key === 'tabKpis') nextPerms.viewKpiDashboard = nextVal;
+      if (key === 'viewKpiDashboard' && nextVal) nextPerms.tabKpis = true;
+      if (key === 'tabArchive') nextPerms.viewArchive = nextVal;
+      if (key === 'viewArchive' && nextVal) nextPerms.tabArchive = true;
+
+      // Sync column-specific permissions with allowedColumns
+      const colSyncMap: Partial<Record<keyof UserPermissions, string>> = {
+        editProcedure155: 'procedure155',
+        auditPdcColumn: 'pdcAudit',
+        auditConstructionColumn: 'constructionAudit',
+        auditTechnicalSupportColumn: 'procedure155Status',
+        uploadInspectionFiles: 'photosFile'
+      };
+      const linkedField = colSyncMap[key];
+      if (linkedField) {
+        setAllowedColumns((cols) =>
+          nextVal
+            ? Array.from(new Set([...cols, linkedField]))
+            : cols.filter((f) => f !== linkedField)
+        );
+      }
+
+      return nextPerms;
     });
   };
 
@@ -243,11 +298,11 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
     if (enableAll) {
       setAllowedColumns(dynamicTableColumns.map((c) => c.field));
     } else {
-      setAllowedColumns((cols) => cols.filter((f) => f !== 'procedure155'));
+      setAllowedColumns(dynamicTableColumns.filter((c) => c.isUniversallyEditable).map((c) => c.field));
     }
   };
 
-  const handleApplyPreset = (preset: 'full' | 'auditor' | 'reports_only' | 'none') => {
+  const handleApplyPreset = (preset: 'full' | 'supervisor_155' | 'auditor' | 'reports_only' | 'none') => {
     if (isSuperAdminEmail(userEmail)) {
       setPermissions({ ...FULL_PERMISSIONS });
       setAllowedColumns(dynamicTableColumns.map((c) => c.field));
@@ -257,40 +312,42 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
       setPermissions({ ...FULL_PERMISSIONS });
       setAllowedColumns(dynamicTableColumns.map((c) => c.field));
       setRoleTitle('مسؤول بصلاحية كاملة');
+    } else if (preset === 'supervisor_155') {
+      setPermissions({
+        ...FULL_PERMISSIONS,
+        clearData: false,
+        managePermissions: false,
+        deleteMonthTable: false
+      });
+      setAllowedColumns(dynamicTableColumns.map((c) => c.field));
+      setRoleTitle('مشرف ومعتمد إجراء 155 وأرشيف 155');
     } else if (preset === 'auditor') {
       setPermissions({
-        ...EMPTY_PERMISSIONS,
-        addWorkOrder: true,
-        editWorkOrderStatus: true,
-        editWorkOrderBasic: true,
-        inlineTableEdit: true,
-        auditPdcColumn: true,
-        auditConstructionColumn: true,
-        auditTechnicalSupportColumn: true,
-        editProcedure155: false,
-        uploadInspectionFiles: true,
+        ...DEFAULT_NEW_USER_PERMISSIONS,
         importExcel: true,
-        importCompatibleTables: true,
-        exportTable: true,
-        smartAudit: true,
-        searchAndFilter: true,
-        viewKpiDashboard: true,
-        viewComprehensiveReports: true,
-        viewNotesReport: true,
-        viewContractorClosureReport: true,
-        viewWeeklyReport: true,
-        viewOfficeComparison: true,
-        viewArchive: true
+        importCompatibleTables: true
       });
       setAllowedColumns(
         dynamicTableColumns
           .filter((c) => c.field !== 'procedure155')
           .map((c) => c.field)
       );
-      setRoleTitle('مدقق جودة ميداني');
+      setRoleTitle('مدقق جودة ميداني (PDC / إنشاءات / مساندة)');
     } else if (preset === 'reports_only') {
       setPermissions({
         ...EMPTY_PERMISSIONS,
+        tabHome: true,
+        tabWorkOrders: true,
+        tabKpis: true,
+        tabQualityGuide: true,
+        tabAuditHub: true,
+        tabOffices: true,
+        tabContractors: true,
+        tabArchive: true,
+        tabReports: true,
+        tabDocuments: false,
+        tabSettings: false,
+        viewPhotos: true,
         exportTable: true,
         searchAndFilter: true,
         viewKpiDashboard: true,
@@ -301,15 +358,15 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
         viewOfficeComparison: true,
         viewArchive: true
       });
-      setAllowedColumns((cols) => cols.filter((f) => f !== 'procedure155'));
-      setRoleTitle('مطلع تقارير ولوحات قياس');
+      setAllowedColumns(dynamicTableColumns.filter((c) => c.isUniversallyEditable).map((c) => c.field));
+      setRoleTitle('مطلع مؤشرات أداء (KPIs) وتقارير');
     } else {
       setPermissions({ ...EMPTY_PERMISSIONS });
-      setAllowedColumns((cols) => cols.filter((f) => f !== 'procedure155'));
+      setAllowedColumns(dynamicTableColumns.filter((c) => c.isUniversallyEditable).map((c) => c.field));
     }
   };
 
-  const handleToggleCategory = (category: 'tools' | 'reports' | 'structure' | 'system', enable: boolean) => {
+  const handleToggleCategory = (category: PermissionCategoryId, enable: boolean) => {
     if (isSuperAdminEmail(userEmail)) return;
     const categoryKeys = PERMISSION_DEFINITIONS.filter((d) => d.category === category).map((d) => d.key);
     setPermissions((prev) => {
@@ -319,11 +376,11 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
       }
       return next;
     });
-    if (category === 'tools') {
+    if (category === 'audit_155') {
       setAllowedColumns((cols) =>
         enable
-          ? Array.from(new Set([...cols, 'procedure155']))
-          : cols.filter((f) => f !== 'procedure155')
+          ? Array.from(new Set([...cols, 'pdcAudit', 'constructionAudit', 'procedure155Status', 'procedure155']))
+          : cols.filter((f) => !['pdcAudit', 'constructionAudit', 'procedure155Status', 'procedure155'].includes(f))
       );
     }
   };
@@ -347,10 +404,14 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
     }
 
     if (!cleanEmail) {
-      const safeSlug = encodeURIComponent(cleanUser.replace(/\s+/g, '_')).replace(/%/g, '').toLowerCase() || `usr_${Date.now().toString().slice(-4)}`;
+      const safeSlug =
+        encodeURIComponent(cleanUser.replace(/\s+/g, '_')).replace(/%/g, '').toLowerCase() ||
+        `usr_${Date.now().toString().slice(-4)}`;
       cleanEmail = `${safeSlug}@platform.sec`;
     } else if (!cleanEmail.includes('@')) {
-      const safeSlug = encodeURIComponent(cleanEmail.replace(/\s+/g, '_')).replace(/%/g, '').toLowerCase() || `usr_${Date.now().toString().slice(-4)}`;
+      const safeSlug =
+        encodeURIComponent(cleanEmail.replace(/\s+/g, '_')).replace(/%/g, '').toLowerCase() ||
+        `usr_${Date.now().toString().slice(-4)}`;
       cleanEmail = `${safeSlug}@platform.sec`;
     }
 
@@ -362,7 +423,9 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
     }
 
     if (!isSuper && cleanUser === SUPER_ADMIN_USERNAME && !editingUserId) {
-      setFormError('اسم المستخدم (831300) مخصص حصرياً للمسؤولين الرئيسيين للمنظومة. يرجى اختيار اسم مستخدم آخر للموظف (مثال: 831301 أو eng_ahmad).');
+      setFormError(
+        `اسم المستخدم (${SUPER_ADMIN_USERNAME}) مخصص حصرياً للمسؤول الرئيسي للمنظومة. يرجى اختيار اسم مستخدم آخر للموظف.`
+      );
       return;
     }
 
@@ -371,7 +434,9 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
         (u) => u.email?.toLowerCase().trim() === cleanEmail && !isSuperAdminEmail(cleanEmail)
       );
       if (duplicateEmail) {
-        setFormError(`البريد الإلكتروني (${cleanEmail}) مسجل مسبقاً لمستخدم آخر. يمكنك تعديل حسابه من قائمة الحسابات المسجلة.`);
+        setFormError(
+          `البريد الإلكتروني (${cleanEmail}) مسجل مسبقاً لمستخدم آخر. يمكنك تعديل حسابه من قائمة الحسابات المسجلة.`
+        );
         return;
       }
 
@@ -384,7 +449,10 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
       }
     } else {
       const duplicateUsername = allUsers.find(
-        (u) => u.id !== editingUserId && !u.isSuperAdmin && u.username?.toLowerCase().trim() === cleanUser.toLowerCase()
+        (u) =>
+          u.id !== editingUserId &&
+          !u.isSuperAdmin &&
+          u.username?.toLowerCase().trim() === cleanUser.toLowerCase()
       );
       if (duplicateUsername) {
         setFormError(`اسم المستخدم (${cleanUser}) مستخدم مسبقاً لموظف آخر. يرجى اختيار اسم مستخدم آخر.`);
@@ -402,7 +470,7 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
         displayName: displayName.trim() || cleanUser,
         roleTitle:
           normalizeMahmoudRoleTitle({ username: cleanUser, email: cleanEmail, displayName, roleTitle }) ||
-          (isSuper ? 'مدير عام المنظومة - صلاحية كاملة' : roleTitle.trim() || 'مستخدم معتمد'),
+          (isSuper ? PRIMARY_SUPER_ADMIN_ROLE_TITLE : roleTitle.trim() || 'مستخدم معتمد'),
         isSuperAdmin: isSuper,
         isActive: isSuper ? true : isActive,
         permissions: isSuper
@@ -413,7 +481,7 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
       });
 
       const msg = editingUserId
-        ? `تم تحديث حساب وصلاحيات المستخدم (${cleanUser}) ومزامنتها فوراً`
+        ? `تم تحديث حساب وصلاحيات المستخدم (${cleanUser}) ومزامنتها فوراً لدى جميع المتصلين`
         : `تم إنشاء حساب المستخدم (${cleanUser}) وتفعيل صلاحياته المحددة بنجاح ومزامنتها للجميع`;
       setFormSuccess(msg);
       if (onShowToast) onShowToast(msg, editingUserId ? 'update' : 'create');
@@ -430,7 +498,7 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
   };
 
   const handleCopyCredentials = (u: PlatformUser) => {
-    const text = `بيانات الدخول لمنصة حوكمة جودة اعمال الانشاءات:\nالبريد الإلكتروني: ${u.email}\nاسم المستخدم (User): ${u.username}\nكلمة المرور: [محفوظة ومشفرة على الخادم]`;
+    const text = `بيانات الدخول لمنصة حوكمة جودة أعمال الإنشاءات (إجراء 155):\nالبريد الإلكتروني: ${u.email}\nاسم المستخدم (User): ${u.username}\nكلمة المرور: [محفوظة ومشفرة على الخادم]`;
     navigator.clipboard?.writeText(text);
     setCopiedId(u.id);
     setTimeout(() => setCopiedId(null), 2000);
@@ -442,50 +510,110 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
 
   const customUsers = allUsers.filter((u) => !isSuperAdminEmail(u.email) && !isPurgedLegacyUserOrEmail(u));
 
-  const categories: { id: 'tools' | 'reports' | 'structure' | 'system'; title: string; badge: string }[] = [
-    { id: 'tools', title: '1. صلاحيات أدوات الجدول وأوامر العمل', badge: 'الأدوات الأساسية' },
-    { id: 'reports', title: '2. صلاحيات الاطلاع على التقارير ولوحات القياس (KPIs)', badge: 'التقارير والمقارنات' },
-    { id: 'structure', title: '3. صلاحيات إدارة الجداول والهيكل والمكاتب والمقاولين', badge: 'إدارة الهيكل' },
-    { id: 'system', title: '4. صلاحيات الصيانة المتقدمة وإدارة النظام', badge: 'إدارة النظام' }
+  const categories: {
+    id: PermissionCategoryId;
+    title: string;
+    shortTitle: string;
+    subtitle: string;
+    badge: string;
+    icon: React.ComponentType<{ className?: string }>;
+    headerBg: string;
+  }[] = [
+    {
+      id: 'sidebar_tabs',
+      title: 'القسم 1: صلاحيات تبويبات العمود الجانبي والصفحات الرئيسية (11 تبويباً)',
+      shortTitle: '1. تبويبات العمود الجانبي',
+      subtitle: 'التحكم في إمكانية فتح واستعراض كل تبويب في القائمة الجانبية الموحدة للمنصة',
+      badge: '11 تبويب جانبي',
+      icon: LayoutGrid,
+      headerBg: 'from-[#001D40] to-[#003B73]'
+    },
+    {
+      id: 'tools',
+      title: 'القسم 2: صلاحيات عمليات جدول أوامر العمل والمرفقات الميدانية',
+      shortTitle: '2. عمليات الجدول والمرفقات',
+      subtitle: 'الإضافة، تعديل البيانات الأساسية، تحديث الجودة، التعديل المباشر للخلايا، رفع ملفات الصور و PDF، والحذف',
+      badge: 'عمليات الجدول',
+      icon: TableProperties,
+      headerBg: 'from-[#002855] to-[#004B8D]'
+    },
+    {
+      id: 'audit_155',
+      title: 'القسم 3: صلاحيات التدقيق الثلاثي المستقل واعتماد وأرشفة إجراء 155',
+      shortTitle: '3. التدقيق وأرشيف 155',
+      subtitle: 'تدقيق (PDC • الإنشاءات • المساندة الفنية)، اختيار (تم الاجراء) في عمود إجراء 155، وإدارة قائمتي (تم التدقيق عليه) و(ارشيف 155)',
+      badge: 'التدقيق وأرشيف 155',
+      icon: ListChecks,
+      headerBg: 'from-emerald-900 to-teal-900'
+    },
+    {
+      id: 'reports',
+      title: 'القسم 4: صلاحيات مؤشرات الأداء التفاعلية (KPIs) والتقارير والتصدير',
+      shortTitle: '4. المؤشرات (KPIs) والتقارير',
+      subtitle: 'فتح لوحة المؤشرات والقوائم المنبثقة فوق الصفحة، التوجه المباشر للجدول، التقارير الدورية، والتصدير ومشاركة البريد',
+      badge: 'المؤشرات والتقارير',
+      icon: BarChart3,
+      headerBg: 'from-indigo-950 to-[#002855]'
+    },
+    {
+      id: 'structure',
+      title: 'القسم 5: صلاحيات الاستيراد وإدارة الجداول والهيكل التنظيمي',
+      shortTitle: '5. الاستيراد والهيكل',
+      subtitle: 'استيراد Excel، الاستيراد الذكي المتوافق، الجداول الشهرية المستقلة، المكاتب الفرعية، المقاولين، والأعمدة والقوائم',
+      badge: 'إدارة الهيكل',
+      icon: Building2,
+      headerBg: 'from-slate-900 to-[#002855]'
+    },
+    {
+      id: 'system',
+      title: 'القسم 6: صلاحيات الخزنة السحابية والإشعارات وإدارة النظام',
+      shortTitle: '6. الخزنة وإدارة النظام',
+      subtitle: 'استيراد وتصدير النسخ الاحتياطية السحابية، إدارة الإشعارات الفورية، تفريغ البيانات، وإدارة صلاحيات المستخدمين',
+      badge: 'إدارة النظام',
+      icon: Settings,
+      headerBg: 'from-amber-950 to-slate-900'
+    }
   ];
+
+  const normalizedQuery = permSearchQuery.trim().toLowerCase();
 
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150 font-['Cairo',sans-serif]"
       dir="rtl"
     >
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-6xl max-h-[94vh] flex flex-col overflow-hidden">
-        {/* Modal Header */}
-        <div className="bg-gradient-to-l from-slate-950 via-emerald-950 to-slate-900 px-5 py-4 text-white flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 shrink-0">
+      <div className="bg-white rounded-3xl border-2 border-[#002855]/30 shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col overflow-hidden">
+        {/* Modal Header - Unified SEC Corporate Navy & Orange Identity */}
+        <div className="bg-gradient-to-l from-[#001D40] via-[#002855] to-[#003B73] px-5 py-3.5 text-white flex flex-wrap items-center justify-between gap-3 border-b-2 border-[#F58220] shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 border border-emerald-300/40 flex items-center justify-center shadow-lg">
+            <div className="w-11 h-11 rounded-2xl bg-[#F58220] border border-amber-300/40 flex items-center justify-center shadow-lg shrink-0">
               <KeyRound className="w-6 h-6 text-white" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-base sm:text-lg font-black text-white">
-                  إدارة الصلاحيات وحسابات المستخدمين
+                  إدارة الصلاحيات وحسابات المستخدمين (الهيكلة الشاملة المحدثة)
                 </h2>
-                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[10px] font-black">
-                  حوكمة جودة اعمال الانشاءات
+                <span className="px-2.5 py-0.5 rounded-lg bg-white/10 text-[#FDB813] border border-[#FDB813]/30 text-[10px] font-black">
+                  7 أقسام متزامنة • {totalPermsCount} صلاحية • {dynamicTableColumns.length} عمود
                 </span>
               </div>
-              <p className="text-xs text-slate-300 mt-0.5">
-                إنشاء حسابات المستخدمين وتخصيص صلاحيات الأدوات والتقارير بدقة مع مزامنة سحابية فورية
+              <p className="text-[11px] text-blue-100 mt-0.5 font-bold">
+                مزامنة لحظية لصلاحيات تبويبات العمود الجانبي، الإجراءات الميدانية، التدقيق الثلاثي، أرشيف 155، المؤشرات التفاعلية، والأعمدة
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             {/* Switch Tabs */}
-            <div className="flex items-center bg-slate-900/90 p-1 rounded-xl border border-slate-700">
+            <div className="flex items-center bg-[#001D40]/90 p-1 rounded-xl border border-white/15">
               <button
                 type="button"
                 onClick={() => setActiveTab('create_edit')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
                   activeTab === 'create_edit'
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'bg-[#F58220] text-white shadow-xs'
+                    : 'text-blue-100 hover:text-white'
                 }`}
               >
                 <UserPlus className="w-3.5 h-3.5" />
@@ -496,8 +624,8 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                 onClick={() => setActiveTab('users_list')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
                   activeTab === 'users_list'
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'bg-[#F58220] text-white shadow-xs'
+                    : 'text-blue-100 hover:text-white'
                 }`}
               >
                 <Users className="w-3.5 h-3.5" />
@@ -517,39 +645,40 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
         </div>
 
         {/* Super Admin Authorized Emails Banner */}
-        <div className="bg-emerald-950/95 border-b border-emerald-800/60 px-5 py-2.5 text-white flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
+        <div className="bg-[#001D40] border-b border-[#003B73] px-5 py-2 text-white flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 font-black text-amber-300">
-              <Crown className="w-4 h-4" />
-              <span>أصحاب الصلاحية الكاملة لإنشاء المستخدمين ومنح الصلاحيات:</span>
+            <span className="inline-flex items-center gap-1.5 font-black text-[#FDB813]">
+              <Crown className="w-4 h-4 text-[#F58220]" />
+              <span>مسؤول النظام الرئيسي (صلاحية كاملة ومطلقة):</span>
             </span>
             {SUPER_ADMIN_EMAILS.map((email) => (
               <span
                 key={email}
-                className="px-2.5 py-0.5 rounded-lg bg-emerald-900/90 border border-emerald-500/40 text-emerald-100 font-mono font-bold text-[11px]"
+                className="px-2.5 py-0.5 rounded-lg bg-[#002855] border border-blue-400/30 text-blue-100 font-mono font-bold text-[11px]"
               >
                 {email}
               </span>
             ))}
           </div>
-          <div className="flex items-center gap-2 text-[11px] font-mono bg-slate-900/90 px-3 py-1 rounded-lg border border-slate-700">
-            <span className="text-emerald-300 font-bold">إدارة مركزية موثقة</span>
+          <div className="flex items-center gap-2 text-[11px] font-bold bg-[#002855] px-3 py-0.5 rounded-lg border border-blue-800 text-emerald-300">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>حفظ تلقائي وبث فوري للصلاحيات دون تراجع</span>
           </div>
         </div>
 
         {/* Main Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-50">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 bg-[#F4F6F9]">
           {activeTab === 'create_edit' ? (
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form onSubmit={handleSubmit} className="space-y-5">
               {formError && (
-                <div className="p-4 rounded-2xl bg-rose-50 border-2 border-rose-200 text-rose-800 text-xs font-black flex items-center gap-2.5">
+                <div className="p-3.5 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-900 text-xs font-black flex items-center gap-2.5">
                   <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
                   <span>{formError}</span>
                 </div>
               )}
 
               {formSuccess && (
-                <div className="p-4 rounded-2xl bg-emerald-50 border-2 border-emerald-200 text-emerald-900 text-xs font-black flex items-center justify-between gap-2.5">
+                <div className="p-3.5 rounded-2xl bg-emerald-50 border-2 border-emerald-300 text-emerald-950 text-xs font-black flex items-center justify-between gap-2.5">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
                     <span>{formSuccess}</span>
@@ -564,19 +693,19 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                 </div>
               )}
 
-              {/* Section 1: User Account Credentials */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+              {/* User Account Credentials Card */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                      <UserPlus className="w-4 h-4" />
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-[#002855] text-[#F58220] flex items-center justify-center shrink-0">
+                      <UserPlus className="w-4.5 h-4.5" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-black text-slate-900">
-                        {editingUserId ? 'تعديل بيانات حساب المستخدم' : 'بيانات إنشاء حساب المستخدم الجديد'}
+                      <h3 className="text-sm font-black text-[#002855]">
+                        {editingUserId ? 'بيانات حساب المستخدم الجاري تعديله' : 'بيانات إنشاء حساب المستخدم الجديد'}
                       </h3>
-                      <p className="text-[11px] text-slate-500">
-                        أدخل البريد الإلكتروني واسم المستخدم (User) وكلمة المرور (Password) الخاصة بالمستخدم
+                      <p className="text-[11px] text-slate-500 font-bold">
+                        أدخل البريد الإلكتروني (يُستخدم أيضاً لإرسال كلمة السر الاحتياطية عند نسيان كلمة المرور) واسم المستخدم وكلمة المرور
                       </p>
                     </div>
                   </div>
@@ -585,7 +714,7 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                     <button
                       type="button"
                       onClick={resetForm}
-                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-xs flex items-center gap-1.5 cursor-pointer"
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
                       <span>إنشاء مستخدم جديد بدلاً من التعديل</span>
@@ -593,17 +722,17 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
                   {/* Authorizing Super Admin Email */}
                   <div>
-                    <label className="block text-xs font-black text-slate-700 mb-1.5">
+                    <label className="block text-xs font-black text-[#002855] mb-1">
                       مسؤول الصلاحيات المانح للحساب
                     </label>
                     <select
                       value={adminAuthorizerEmail}
                       onChange={(e) => setAdminAuthorizerEmail(e.target.value)}
                       dir="ltr"
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-300 focus:border-emerald-600 text-slate-900 font-mono font-bold text-xs outline-none"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-300 focus:border-[#004B8D] text-slate-900 font-mono font-bold text-xs outline-none"
                     >
                       {authorizerEmails.map((em) => (
                         <option key={em} value={em}>
@@ -615,57 +744,57 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
 
                   {/* User Email */}
                   <div>
-                    <label className="block text-xs font-black text-slate-700 mb-1.5">
+                    <label className="block text-xs font-black text-[#002855] mb-1">
                       البريد الإلكتروني للمستخدم (Email) <span className="text-rose-600">*</span>
                     </label>
                     <div className="relative">
-                      <Mail className="w-4 h-4 text-slate-400 absolute right-3.5 top-3" />
+                      <Mail className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
                       <input
                         type="text"
                         inputMode="email"
                         value={userEmail}
                         onChange={(e) => setUserEmail(e.target.value)}
-                        placeholder="user@example.com (أو اسم الموظف)"
+                        placeholder="user@se.com.sa"
                         dir="ltr"
-                        className="w-full pr-10 pl-3.5 py-2.5 rounded-xl bg-white border border-slate-300 focus:border-emerald-600 text-slate-900 font-mono font-bold text-xs text-right outline-none"
+                        className="w-full pr-9 pl-3 py-2 rounded-xl bg-white border border-slate-300 focus:border-[#004B8D] text-slate-900 font-mono font-bold text-xs text-right outline-none"
                       />
                     </div>
                   </div>
 
                   {/* Username (User) */}
                   <div>
-                    <label className="block text-xs font-black text-slate-700 mb-1.5">
+                    <label className="block text-xs font-black text-[#002855] mb-1">
                       اسم المستخدم للدخول (User) <span className="text-rose-600">*</span>
                     </label>
                     <div className="relative">
-                      <User className="w-4 h-4 text-emerald-600 absolute right-3.5 top-3" />
+                      <User className="w-4 h-4 text-[#004B8D] absolute right-3 top-2.5" />
                       <input
                         type="text"
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
-                        placeholder="مثال: 831301 أو ahmad"
+                        placeholder="مثال: 831301 أو eng_ahmad"
                         dir="ltr"
                         required
-                        className="w-full pr-10 pl-3.5 py-2.5 rounded-xl bg-white border border-slate-300 focus:border-emerald-600 text-slate-900 font-mono font-bold text-xs text-right outline-none"
+                        className="w-full pr-9 pl-3 py-2 rounded-xl bg-white border border-slate-300 focus:border-[#004B8D] text-slate-900 font-mono font-bold text-xs text-right outline-none"
                       />
                     </div>
                   </div>
 
                   {/* Password */}
                   <div>
-                    <label className="block text-xs font-black text-slate-700 mb-1.5">
+                    <label className="block text-xs font-black text-[#002855] mb-1">
                       كلمة المرور (Password) {!editingUserId && <span className="text-rose-600">*</span>}
                     </label>
                     <div className="relative">
-                      <Lock className="w-4 h-4 text-amber-600 absolute right-3.5 top-3" />
+                      <Lock className="w-4 h-4 text-[#F58220] absolute right-3 top-2.5" />
                       <input
                         type={showPassInForm ? 'text' : 'password'}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        placeholder={editingUserId ? 'اتركها فارغة للاحتفاظ بكلمة المرور الحالية' : 'أدخل كلمة المرور للمستخدم'}
+                        placeholder={editingUserId ? 'اتركها فارغة للاحتفاظ بالحالية' : 'أدخل كلمة المرور للمستخدم'}
                         dir="ltr"
                         required={!editingUserId}
-                        className="w-full pr-10 pl-10 py-2.5 rounded-xl bg-white border border-slate-300 focus:border-emerald-600 text-slate-900 font-mono font-bold text-xs text-right outline-none"
+                        className="w-full pr-9 pl-9 py-2 rounded-xl bg-white border border-slate-300 focus:border-[#004B8D] text-slate-900 font-mono font-bold text-xs text-right outline-none"
                       />
                       <button
                         type="button"
@@ -679,35 +808,35 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
 
                   {/* Display Name */}
                   <div>
-                    <label className="block text-xs font-black text-slate-700 mb-1.5">
-                      اسم المستخدم / الموظف (اختياري)
+                    <label className="block text-xs font-black text-[#002855] mb-1">
+                      اسم الموظف الظاهر في المنصة والاعتمادات
                     </label>
                     <input
                       type="text"
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
-                      placeholder="الاسم الظاهر في الإشعارات والمزامنة"
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 focus:border-emerald-600 text-slate-900 font-bold text-xs outline-none"
+                      placeholder="الاسم الظاهر في الإشعارات وتوثيق التدقيق"
+                      className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 focus:border-[#004B8D] text-slate-900 font-bold text-xs outline-none"
                     />
                   </div>
 
                   {/* Role / Job Title */}
                   <div>
-                    <label className="block text-xs font-black text-slate-700 mb-1.5">
-                      المسمى الوظيفي / الدور
+                    <label className="block text-xs font-black text-[#002855] mb-1">
+                      المسمى الوظيفي / الإدارة وحالة الحساب
                     </label>
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
                         value={roleTitle}
                         onChange={(e) => setRoleTitle(e.target.value)}
-                        placeholder="مثال: مهندس جودة / مدقق إجراء 155"
-                        className="flex-1 px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 focus:border-emerald-600 text-slate-900 font-bold text-xs outline-none"
+                        placeholder="مثال: مهندس تدقيق PDC / المساندة الفنية"
+                        className="flex-1 px-3 py-2 rounded-xl bg-white border border-slate-300 focus:border-[#004B8D] text-slate-900 font-bold text-xs outline-none"
                       />
                       <button
                         type="button"
                         onClick={() => setIsActive((prev) => !prev)}
-                        className={`px-3 py-2.5 rounded-xl font-black text-xs shrink-0 transition-all cursor-pointer border ${
+                        className={`px-3 py-2 rounded-xl font-black text-xs shrink-0 transition-all cursor-pointer border ${
                           isActive
                             ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
                             : 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100'
@@ -721,52 +850,63 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                 </div>
               </div>
 
-              {/* Section 2: Granular Permissions Matrix */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-5">
-                <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-200">
+              {/* Navigation & Presets Control Bar for the 7 Permission Sections */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
                   <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm sm:text-base font-black text-slate-900">
-                        تخصيص ومنح صلاحيات البرنامج للمستخدم
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-sm sm:text-base font-black text-[#002855]">
+                        هيكلة أقسام الصلاحيات الموحدة (7 أقسام شاملة)
                       </h3>
-                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black">
-                        مفعّل: {enabledCount} من {totalPermsCount} صلاحية
+                      <span className="px-2.5 py-0.5 rounded-lg bg-[#002855] text-[#FDB813] text-xs font-mono font-black">
+                        مفعّل: {enabledCount} / {totalPermsCount} صلاحية
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-lg bg-blue-50 text-[#004B8D] border border-blue-200 text-xs font-mono font-black">
+                        الأعمدة المصرحة: {allowedColumns.length} / {dynamicTableColumns.length}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      أي أداة أو تقرير غير مفعّل هنا لن يتمكن المستخدم من فتحه وستظهر له فوراً رسالة «لا توجد صلاحية»
+                    <p className="text-[11px] text-slate-500 font-bold mt-0.5">
+                      اختر قالباً جاهزاً أو انتقل بين الأقسام الـ 7 لتخصيص صلاحيات التبويبات الجانبية، الإجراءات، التدقيق الثلاثي، أرشيف 155، والأعمدة
                     </p>
                   </div>
 
-                  {/* Quick Presets */}
+                  {/* Quick Role Presets */}
                   <div className="flex flex-wrap items-center gap-1.5">
                     <button
                       type="button"
                       onClick={() => handleSetAllPermissions(true)}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-1 cursor-pointer shadow-2xs"
+                      className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] flex items-center gap-1 cursor-pointer shadow-2xs"
                     >
                       <Check className="w-3.5 h-3.5" />
-                      <span>منح كافة الصلاحيات (الكل)</span>
+                      <span>منح كافة الصلاحيات</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleApplyPreset('supervisor_155')}
+                      className="px-2.5 py-1.5 rounded-xl bg-[#002855] hover:bg-[#003B73] text-[#FDB813] font-black text-[11px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-[#F58220]" />
+                      <span>مشرف ومعتمد 155</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => handleApplyPreset('auditor')}
-                      className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs flex items-center gap-1 cursor-pointer shadow-2xs"
+                      className="px-2.5 py-1.5 rounded-xl bg-[#004B8D] hover:bg-[#003B73] text-white font-black text-[11px] flex items-center gap-1 cursor-pointer shadow-2xs"
                     >
                       <Sparkles className="w-3.5 h-3.5" />
-                      <span>صلاحيات مدقق جودة</span>
+                      <span>مدقق جودة ميداني</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => handleApplyPreset('reports_only')}
-                      className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs flex items-center gap-1 cursor-pointer shadow-2xs"
+                      className="px-2.5 py-1.5 rounded-xl bg-[#F58220] hover:bg-[#d96b12] text-white font-black text-[11px] flex items-center gap-1 cursor-pointer shadow-2xs"
                     >
                       <span>اطلاع وتقارير فقط</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => handleSetAllPermissions(false)}
-                      className="px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 font-black text-xs flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 font-black text-[11px] flex items-center gap-1 cursor-pointer"
                     >
                       <Ban className="w-3.5 h-3.5" />
                       <span>إلغاء الكل</span>
@@ -774,39 +914,132 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                   </div>
                 </div>
 
-                {/* Permission Categories */}
-                <div className="space-y-6">
-                  {categories.map((cat) => {
-                    const catItems = PERMISSION_DEFINITIONS.filter((d) => d.category === cat.id);
-                    const allCatEnabled = catItems.every((item) => permissions[item.key]);
+                {/* Section Filter Tabs + Quick Search */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategoryFilter('all')}
+                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-black transition-all cursor-pointer ${
+                        selectedCategoryFilter === 'all'
+                          ? 'bg-[#002855] text-white shadow-2xs'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      عرض كافة الأقسام (7)
+                    </button>
+                    {categories.map((cat) => {
+                      const catItems = PERMISSION_DEFINITIONS.filter((d) => d.category === cat.id);
+                      const catEnabledCount = catItems.filter((i) => Boolean(permissions[i.key])).length;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => setSelectedCategoryFilter(cat.id)}
+                          className={`px-2.5 py-1.5 rounded-xl text-[11px] font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                            selectedCategoryFilter === cat.id
+                              ? 'bg-[#F58220] text-white shadow-2xs'
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          <span>{cat.shortTitle}</span>
+                          <span className="px-1.5 py-0.2 rounded bg-black/15 font-mono text-[10px]">
+                            {catEnabledCount}/{catItems.length}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategoryFilter('columns')}
+                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                        selectedCategoryFilter === 'columns'
+                          ? 'bg-[#F58220] text-white shadow-2xs'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      <span>7. أعمدة الجدول</span>
+                      <span className="px-1.5 py-0.2 rounded bg-black/15 font-mono text-[10px]">
+                        {allowedColumns.length}/{dynamicTableColumns.length}
+                      </span>
+                    </button>
+                  </div>
+
+                  <div className="relative min-w-[210px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5" />
+                    <input
+                      type="text"
+                      value={permSearchQuery}
+                      onChange={(e) => setPermSearchQuery(e.target.value)}
+                      placeholder="ابحث عن صلاحية أو تبويب أو عمود..."
+                      className="w-full pr-8 pl-3 py-1.5 rounded-xl bg-slate-50 border border-slate-300 focus:border-[#004B8D] text-xs font-bold text-slate-800 outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Sections 1..6: Categorized Platform Permissions */}
+              <div className="space-y-4">
+                {categories
+                  .filter((cat) => selectedCategoryFilter === 'all' || selectedCategoryFilter === cat.id)
+                  .map((cat) => {
+                    const catItems = PERMISSION_DEFINITIONS.filter(
+                      (d) =>
+                        d.category === cat.id &&
+                        (!normalizedQuery ||
+                          d.label.toLowerCase().includes(normalizedQuery) ||
+                          d.description.toLowerCase().includes(normalizedQuery))
+                    );
+                    if (catItems.length === 0) return null;
+
+                    const allCatItems = PERMISSION_DEFINITIONS.filter((d) => d.category === cat.id);
+                    const enabledInCat = allCatItems.filter((item) => Boolean(permissions[item.key])).length;
+                    const allCatEnabled = allCatItems.every((item) => Boolean(permissions[item.key]));
+                    const CatIcon = cat.icon;
 
                     return (
-                      <div key={cat.id} className="space-y-3">
-                        <div className="flex items-center justify-between bg-slate-100 px-3.5 py-2 rounded-xl border border-slate-200">
-                          <div className="flex items-center gap-2">
-                            <span className="font-black text-xs sm:text-sm text-slate-900">
-                              {cat.title}
-                            </span>
-                            <span className="px-2 py-0.5 rounded bg-white text-slate-600 border border-slate-200 text-[10px] font-bold">
-                              {cat.badge}
-                            </span>
+                      <div
+                        key={cat.id}
+                        className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs"
+                      >
+                        {/* Section Header */}
+                        <div
+                          className={`bg-gradient-to-l ${cat.headerBg} px-4 py-3 text-white flex flex-wrap items-center justify-between gap-2 border-b border-[#F58220]/60`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0 text-[#FDB813]">
+                              <CatIcon className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-black text-xs sm:text-sm text-white">
+                                  {cat.title}
+                                </span>
+                                <span className="px-2 py-0.5 rounded-md bg-white/15 text-[#FDB813] font-mono text-[10px] font-black">
+                                  {enabledInCat} / {allCatItems.length} مفعّل
+                                </span>
+                              </div>
+                              <p className="text-[10.5px] text-blue-100 font-bold mt-0.5">
+                                {cat.subtitle}
+                              </p>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleToggleCategory(cat.id, !allCatEnabled)}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
-                                allCatEnabled
-                                  ? 'bg-rose-100 text-rose-700 hover:bg-rose-200'
-                                  : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                              }`}
-                            >
-                              {allCatEnabled ? 'إيقاف القسم' : 'تفعيل القسم بالكامل'}
-                            </button>
-                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCategory(cat.id, !allCatEnabled)}
+                            className={`px-3 py-1.5 rounded-xl text-[11px] font-black cursor-pointer transition-all shrink-0 ${
+                              allCatEnabled
+                                ? 'bg-rose-500/90 hover:bg-rose-600 text-white'
+                                : 'bg-[#F58220] hover:bg-[#d96b12] text-white shadow-2xs'
+                            }`}
+                          >
+                            {allCatEnabled ? 'إيقاف القسم بالكامل' : 'تفعيل القسم بالكامل'}
+                          </button>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                        {/* Section Permissions Grid */}
+                        <div className="p-3.5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
                           {catItems.map((perm) => {
                             const isGranted = Boolean(permissions[perm.key]);
                             return (
@@ -815,15 +1048,15 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                                 onClick={() => handleTogglePermission(perm.key)}
                                 className={`p-3 rounded-2xl border-2 transition-all cursor-pointer flex items-center justify-between gap-3 ${
                                   isGranted
-                                    ? 'bg-emerald-50/70 border-emerald-500/60 shadow-2xs'
-                                    : 'bg-slate-50/80 border-slate-200 opacity-80 hover:opacity-100'
+                                    ? 'bg-emerald-50/75 border-emerald-500/70 shadow-2xs'
+                                    : 'bg-slate-50/80 border-slate-200 opacity-85 hover:opacity-100 hover:border-slate-300'
                                 }`}
                               >
                                 <div className="flex-1 min-w-0">
-                                  <div className="font-black text-xs text-slate-900 truncate">
+                                  <div className="font-black text-xs text-[#002855] leading-snug">
                                     {perm.label}
                                   </div>
-                                  <div className="text-[10px] text-slate-500 leading-snug mt-0.5">
+                                  <div className="text-[10px] text-slate-600 font-semibold leading-snug mt-0.5">
                                     {perm.description}
                                   </div>
                                 </div>
@@ -834,10 +1067,10 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                                     e.stopPropagation();
                                     handleTogglePermission(perm.key);
                                   }}
-                                  className={`px-3 py-1.5 rounded-xl font-black text-[11px] flex items-center gap-1 shrink-0 transition-all cursor-pointer ${
+                                  className={`px-2.5 py-1.5 rounded-xl font-black text-[11px] flex items-center gap-1 shrink-0 transition-all cursor-pointer ${
                                     isGranted
                                       ? 'bg-emerald-600 text-white shadow-xs'
-                                      : 'bg-rose-100 text-rose-700 border border-rose-200'
+                                      : 'bg-rose-100 text-rose-800 border border-rose-200'
                                   }`}
                                 >
                                   {isGranted ? (
@@ -859,204 +1092,219 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                       </div>
                     );
                   })}
-                </div>
               </div>
 
-              {/* Section 3: Column-Level Permissions Matrix (صلاحيات الأعمدة بالجدول بذكرها كلها) */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-200">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm sm:text-base font-black text-slate-900">
-                        صلاحيات الأعمدة في جدول أوامر العمل (تخصيص إمكانية تعديل أعمدة بعينها)
-                      </h3>
-                      <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-black">
-                        مصرح: {allowedColumns.length} من {dynamicTableColumns.length} عمود
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">
-                      حدد بدقة الأعمدة التي يحق لهذا المستخدم تعديل خلاياها وقوائمها المنسدلة في الجدول (أي عمود جديد أو تعديل في المنصة يتزامن هنا تلقائياً). 
-                      <span className="text-emerald-700 font-bold mx-1">
-                        (ملاحظة هامة: عمود حالة اجراء 155 مقيد وغير متاح لأي مستخدم إلا بإعطاء صلاحية له، بينما عمود ملاحظات الجودة متاح للجميع).
-                      </span>
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleSelectAllColumns(true)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
-                    >
-                      تحديد كافة الأعمدة ({dynamicTableColumns.length})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectAllColumns(false)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
-                    >
-                      إلغاء تحديد الكل (باستثناء المفتوحة للجميع)
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                  {dynamicTableColumns.map((col, idx) => {
-                    const isUniversal = Boolean(col.isUniversallyEditable);
-                    const isAllowed = isUniversal || allowedColumns.includes(col.field);
-
-                    return (
-                      <div
-                        key={col.field}
-                        onClick={() => {
-                          if (!isUniversal) {
-                            handleToggleColumn(col.field);
-                          }
-                        }}
-                        className={`p-3 rounded-2xl border-2 transition-all flex items-center justify-between gap-3 ${
-                          isUniversal
-                            ? 'bg-amber-50/70 border-amber-400/80 shadow-2xs'
-                            : isAllowed
-                            ? 'bg-blue-50/70 border-blue-400/70 shadow-2xs cursor-pointer'
-                            : 'bg-slate-50/80 border-slate-200 opacity-75 hover:opacity-100 cursor-pointer'
-                        }`}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="w-5 h-5 rounded-md bg-slate-200 text-slate-800 font-bold text-[10px] flex items-center justify-center shrink-0">
-                              {idx + 1}
-                            </span>
-                            <div className="font-black text-xs text-slate-900 truncate">
-                              {col.title}
-                            </div>
-                            {isUniversal && (
-                              <span className="px-1.5 py-0.2 rounded-md bg-amber-500 text-white font-black text-[9px] shadow-2xs shrink-0">
-                                مفتوح للجميع
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-slate-500 leading-snug mt-1 font-mono">
-                            حقل: {col.field}
-                          </div>
-                          <div className="text-[10px] text-slate-600 leading-snug mt-0.5">
-                            {col.description}
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!isUniversal) {
-                              handleToggleColumn(col.field);
-                            }
-                          }}
-                          disabled={isUniversal}
-                          className={`px-2.5 py-1.5 rounded-xl font-black text-[11px] flex items-center gap-1 shrink-0 transition-all ${
-                            isUniversal
-                              ? 'bg-amber-600 text-white shadow-xs cursor-default'
-                              : isAllowed
-                              ? 'bg-blue-600 text-white shadow-xs cursor-pointer'
-                              : 'bg-rose-100 text-rose-700 border border-rose-200 cursor-pointer'
-                          }`}
-                        >
-                          {isUniversal ? (
-                            <>
-                              <Sparkles className="w-3.5 h-3.5 text-amber-200" />
-                              <span>متاح للجميع</span>
-                            </>
-                          ) : isAllowed ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 stroke-[3]" />
-                              <span>مسموح</span>
-                            </>
-                          ) : (
-                            <>
-                              <Ban className="w-3.5 h-3.5" />
-                              <span>محظور</span>
-                            </>
-                          )}
-                        </button>
+              {/* Section 7: Column-Level Permissions Matrix (14 Canonical Columns + Any Custom Columns, without Execution Status) */}
+              {(selectedCategoryFilter === 'all' || selectedCategoryFilter === 'columns') && (
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+                  <div className="bg-gradient-to-l from-[#001D40] via-[#002855] to-[#004B8D] px-4 py-3 text-white flex flex-wrap items-center justify-between gap-2 border-b-2 border-[#F58220]">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0 text-[#FDB813]">
+                        <Columns3 className="w-4 h-4" />
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-xs sm:text-sm font-black text-white">
+                            القسم 7: مصفوفة صلاحيات أعمدة جدول أوامر العمل المعتمدة ({dynamicTableColumns.length} عموداً)
+                          </h3>
+                          <span className="px-2 py-0.5 rounded-md bg-white/15 text-[#FDB813] font-mono text-[10px] font-black">
+                            مصرح: {allowedColumns.length} / {dynamicTableColumns.length} عمود
+                          </span>
+                        </div>
+                        <p className="text-[10.5px] text-blue-100 font-bold mt-0.5">
+                          متزامنة 100% مع هيكلة الجدول الحالية (بعد إزالة عمود حالة التنفيذ وإضافة أرشفة إجراء 155)
+                        </p>
+                      </div>
+                    </div>
 
-                {/* Submit Bar */}
-                <div className="pt-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 text-xs text-slate-600">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                    <span>
-                      يتم حفظ الحساب والصلاحيات ومزامنتها فوراً لدى جميع المتصلين دون أي تأثير على سرعة المزامنة
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {editingUserId && (
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={resetForm}
-                        className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs cursor-pointer"
+                        onClick={() => handleSelectAllColumns(true)}
+                        className="px-3 py-1.5 rounded-xl bg-[#F58220] hover:bg-[#d96b12] text-white text-[11px] font-black transition-colors cursor-pointer"
                       >
-                        إلغاء التعديل
+                        تفعيل كافة الأعمدة ({dynamicTableColumns.length})
                       </button>
-                    )}
-                    <button
-                      type="submit"
-                      disabled={isSaving}
-                      className="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white font-black text-xs sm:text-sm flex items-center gap-2 shadow-lg cursor-pointer disabled:opacity-60"
-                    >
-                      <Save className="w-4 h-4" />
-                      <span>
-                        {isSaving
-                          ? 'جاري الحفظ والمزامنة...'
-                          : editingUserId
-                          ? 'حفظ تعديلات الحساب والصلاحيات'
-                          : 'إنشاء الحساب واعتماد الصلاحيات'}
-                      </span>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectAllColumns(false)}
+                        className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-[11px] font-bold transition-colors cursor-pointer"
+                      >
+                        إلغاء تحديد الأعمدة المقيدة
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                    {dynamicTableColumns
+                      .filter(
+                        (col) =>
+                          !normalizedQuery ||
+                          col.title.toLowerCase().includes(normalizedQuery) ||
+                          col.field.toLowerCase().includes(normalizedQuery) ||
+                          col.description.toLowerCase().includes(normalizedQuery)
+                      )
+                      .map((col, idx) => {
+                        const isUniversal = Boolean(col.isUniversallyEditable);
+                        const isAllowed = isUniversal || allowedColumns.includes(col.field);
+
+                        return (
+                          <div
+                            key={col.field}
+                            onClick={() => {
+                              if (!isUniversal) {
+                                handleToggleColumn(col.field);
+                              }
+                            }}
+                            className={`p-3 rounded-2xl border-2 transition-all flex items-center justify-between gap-3 ${
+                              isUniversal
+                                ? 'bg-amber-50/75 border-amber-400/80 shadow-2xs'
+                                : isAllowed
+                                ? 'bg-blue-50/75 border-blue-400/80 shadow-2xs cursor-pointer'
+                                : 'bg-slate-50/80 border-slate-200 opacity-80 hover:opacity-100 cursor-pointer'
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="w-5 h-5 rounded-md bg-[#002855] text-[#FDB813] font-mono font-black text-[10px] flex items-center justify-center shrink-0">
+                                  {idx + 1}
+                                </span>
+                                <div className="font-black text-xs text-[#002855] truncate">
+                                  {col.title}
+                                </div>
+                                {isUniversal && (
+                                  <span className="px-1.5 py-0.2 rounded-md bg-amber-500 text-white font-black text-[9px] shadow-2xs shrink-0">
+                                    مفتوح للجميع
+                                  </span>
+                                )}
+                                {col.field === 'procedure155' && (
+                                  <span className="px-1.5 py-0.2 rounded-md bg-indigo-700 text-[#FDB813] font-black text-[9px] shadow-2xs shrink-0">
+                                    أرشفة 155
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-slate-600 font-semibold leading-snug mt-1">
+                                {col.description}
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!isUniversal) {
+                                  handleToggleColumn(col.field);
+                                }
+                              }}
+                              disabled={isUniversal}
+                              className={`px-2.5 py-1.5 rounded-xl font-black text-[11px] flex items-center gap-1 shrink-0 transition-all ${
+                                isUniversal
+                                  ? 'bg-amber-600 text-white shadow-xs cursor-default'
+                                  : isAllowed
+                                  ? 'bg-[#004B8D] text-white shadow-xs cursor-pointer'
+                                  : 'bg-rose-100 text-rose-800 border border-rose-200 cursor-pointer'
+                              }`}
+                            >
+                              {isUniversal ? (
+                                <>
+                                  <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                                  <span>متاح للجميع</span>
+                                </>
+                              ) : isAllowed ? (
+                                <>
+                                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                  <span>مسموح</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Ban className="w-3.5 h-3.5" />
+                                  <span>محظور</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })}
                   </div>
                 </div>
-              </form>
+              )}
+
+              {/* Submit Bar */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                  <ShieldCheck className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
+                  <span>
+                    يتم حفظ الحساب والصلاحيات وبثها فوراً لجميع المتصلين في المنصة كإجراء نهائي معتمد
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {editingUserId && (
+                    <button
+                      type="button"
+                      onClick={resetForm}
+                      className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 font-black text-xs cursor-pointer"
+                    >
+                      إلغاء التعديل
+                    </button>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-l from-[#002855] via-[#003B73] to-[#004B8D] hover:from-[#F58220] hover:to-[#d96b12] text-white font-black text-xs sm:text-sm flex items-center gap-2 shadow-md transition-all cursor-pointer disabled:opacity-60 border border-[#F58220]/50"
+                  >
+                    <Save className="w-4 h-4 text-[#FDB813]" />
+                    <span>
+                      {isSaving
+                        ? 'جاري الحفظ والمزامنة الفورية...'
+                        : editingUserId
+                        ? 'حفظ تعديلات الحساب والصلاحيات ومزامنتها'
+                        : 'إنشاء الحساب واعتماد الصلاحيات فوراً'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </form>
           ) : (
             /* TAB 2: Registered Users & Super Admins List */
             <div className="space-y-5">
               {/* 1. Super Admins Card */}
-              <div className="bg-white rounded-2xl border-2 border-emerald-200 p-5 shadow-xs space-y-3">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="bg-white rounded-2xl border-2 border-[#002855]/25 p-5 shadow-xs space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                   <div className="flex items-center gap-2">
-                    <Crown className="w-5 h-5 text-amber-500" />
-                    <h3 className="text-sm font-black text-slate-900">
-                      حسابات المسؤولين الرئيسيين (صلاحية كاملة ومطلقة في كل شيء)
+                    <Crown className="w-5 h-5 text-[#F58220]" />
+                    <h3 className="text-sm font-black text-[#002855]">
+                      حساب المسؤول الرئيسي للمنظومة (صلاحية كاملة ومطلقة في كافة الأقسام والتبويبات)
                     </h3>
                   </div>
-                  <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black">
+                  <span className="px-2.5 py-1 rounded-full bg-[#002855] text-[#FDB813] text-xs font-mono font-black">
                     User: {SUPER_ADMIN_USERNAME} • مصادقة خادم مشفرة
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {SUPER_ADMIN_EMAILS.map((email) => (
                     <div
                       key={email}
-                      className="p-3.5 rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-50/60 border border-emerald-200 flex flex-col justify-between gap-2"
+                      className="p-4 rounded-2xl bg-gradient-to-l from-[#001D40] to-[#002855] text-white border border-[#F58220]/50 flex flex-col justify-between gap-2 shadow-sm"
                     >
                       <div className="flex items-center justify-between">
-                        <span className="px-2 py-0.5 rounded bg-emerald-700 text-white text-[10px] font-black">
+                        <span className="px-2.5 py-0.5 rounded-md bg-[#F58220] text-white text-[10px] font-black">
                           {PRIMARY_SUPER_ADMIN_ROLE_TITLE}
                         </span>
-                        <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                        <ShieldCheck className="w-4 h-4 text-[#FDB813]" />
                       </div>
-                      <div className="font-black text-xs text-slate-900">
+                      <div className="font-black text-sm text-white">
                         {PRIMARY_SUPER_ADMIN_NAME} ({PRIMARY_SUPER_ADMIN_ROLE_TITLE})
                       </div>
-                      <div className="font-mono font-bold text-xs text-slate-700 break-all" dir="ltr">
+                      <div className="font-mono font-bold text-xs text-blue-200 break-all" dir="ltr">
                         {email}
                       </div>
-                      <div className="flex items-center justify-between pt-2 border-t border-emerald-200/60 text-[11px] font-mono text-slate-700">
-                        <span>User: <strong>{SUPER_ADMIN_USERNAME}</strong></span>
-                        <span className="text-emerald-700 font-bold">محمي على الخادم</span>
+                      <div className="flex items-center justify-between pt-2 border-t border-white/15 text-[11px] font-mono text-blue-100">
+                        <span>
+                          User: <strong className="text-[#FDB813]">{SUPER_ADMIN_USERNAME}</strong>
+                        </span>
+                        <span className="text-emerald-300 font-bold">جميع التبويبات والأدوات والأعمدة مفعلة</span>
                       </div>
                     </div>
                   ))}
@@ -1067,11 +1315,11 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
               <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                   <div>
-                    <h3 className="text-sm font-black text-slate-900">
-                      حسابات المستخدمين المنشأة ({customUsers.length})
+                    <h3 className="text-sm font-black text-[#002855]">
+                      حسابات المستخدمين المسجلة ({customUsers.length})
                     </h3>
-                    <p className="text-xs text-slate-500">
-                      يمكنك تعديل صلاحيات أي مستخدم أو تغيير كلمة المرور أو إيقاف الحساب في أي وقت
+                    <p className="text-xs text-slate-500 font-bold">
+                      يمكنك تعديل صلاحيات أي مستخدم أو تخصيص التبويبات والأعمدة المسموحة له أو تغيير كلمة المرور في أي وقت
                     </p>
                   </div>
                   <button
@@ -1080,7 +1328,7 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                       resetForm();
                       setActiveTab('create_edit');
                     }}
-                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer"
+                    className="px-4 py-2 rounded-xl bg-[#F58220] hover:bg-[#d96b12] text-white font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
                   >
                     <UserPlus className="w-4 h-4" />
                     <span>إضافة مستخدم جديد</span>
@@ -1090,11 +1338,11 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                 {customUsers.length === 0 ? (
                   <div className="py-12 text-center space-y-3">
                     <Users className="w-10 h-10 text-slate-300 mx-auto" />
-                    <div className="text-sm font-black text-slate-700">
+                    <div className="text-sm font-black text-[#002855]">
                       لم يتم إنشاء حسابات مستخدمين إضافية بعد
                     </div>
-                    <p className="text-xs text-slate-500 max-w-md mx-auto">
-                      اضغط على «إنشاء حساب ومنح صلاحيات» لإضافة مستخدم جديد عن طريق الإيميل وتحديد اسم المستخدم وكلمة المرور والصلاحيات المسموحة له.
+                    <p className="text-xs text-slate-500 max-w-md mx-auto font-bold">
+                      اضغط على «إنشاء حساب ومنح صلاحيات» لإضافة مستخدم جديد وتحديد صلاحيات التبويبات الجانبية والإجراءات والأعمدة المسموحة له.
                     </p>
                   </div>
                 ) : (
@@ -1103,17 +1351,16 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                       const grantedList = PERMISSION_DEFINITIONS.filter(
                         (d) => u.permissions && u.permissions[d.key]
                       );
-                      const isRevealed = Boolean(revealedPasswords[u.id]);
 
                       return (
                         <div
                           key={u.id}
-                          className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 flex flex-col justify-between gap-3 hover:border-emerald-400 transition-colors"
+                          className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 flex flex-col justify-between gap-3 hover:border-[#004B8D] transition-colors"
                         >
-                          <div className="space-y-2">
+                          <div className="space-y-2.5">
                             <div className="flex items-start justify-between gap-2">
                               <div>
-                                <div className="font-black text-sm text-slate-900 flex items-center gap-2">
+                                <div className="font-black text-sm text-[#002855] flex items-center gap-2">
                                   <span>{u.displayName || u.username}</span>
                                   <span
                                     className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -1125,7 +1372,7 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                                     {u.isActive !== false ? 'نشط' : 'موقوف'}
                                   </span>
                                 </div>
-                                <div className="text-[11px] text-slate-500 font-semibold">
+                                <div className="text-[11px] text-[#F58220] font-black">
                                   {u.roleTitle || 'مستخدم بالمنصة'}
                                 </div>
                               </div>
@@ -1146,9 +1393,9 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                                 <button
                                   type="button"
                                   onClick={() => handleLoadUserToEdit(u)}
-                                  className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1 cursor-pointer"
+                                  className="px-2.5 py-1.5 rounded-lg bg-[#002855] hover:bg-[#004B8D] text-white font-black text-xs flex items-center gap-1 cursor-pointer"
                                 >
-                                  <Edit3 className="w-3 h-3" />
+                                  <Edit3 className="w-3 h-3 text-[#FDB813]" />
                                   <span>تعديل الصلاحيات</span>
                                 </button>
                                 <button
@@ -1170,7 +1417,7 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                               </div>
                               <div>
                                 <span className="text-[10px] text-slate-400 block font-sans">اسم المستخدم (User):</span>
-                                <span className="font-black text-emerald-700">{u.username}</span>
+                                <span className="font-black text-[#004B8D]">{u.username}</span>
                               </div>
                               <div className="flex items-center justify-between">
                                 <div>
@@ -1183,11 +1430,30 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                               </div>
                             </div>
 
-                            {/* Granted Permissions Summary */}
+                            {/* Per-Section Summary Badges */}
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 pt-1">
+                              {categories.map((cat) => {
+                                const catTotal = PERMISSION_DEFINITIONS.filter((d) => d.category === cat.id);
+                                const catGranted = catTotal.filter((d) => Boolean(u.permissions?.[d.key]));
+                                return (
+                                  <div
+                                    key={cat.id}
+                                    className="px-2 py-1 rounded-lg bg-white border border-slate-200 flex items-center justify-between text-[10px]"
+                                  >
+                                    <span className="font-bold text-slate-700 truncate">{cat.shortTitle}</span>
+                                    <span className="font-mono font-black text-[#004B8D]">
+                                      {catGranted.length}/{catTotal.length}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Granted Permissions List */}
                             <div className="pt-1">
                               <div className="flex items-center justify-between text-[11px] mb-1">
                                 <span className="font-bold text-slate-600">
-                                  الصلاحيات الممنوحة ({grantedList.length} من {totalPermsCount}):
+                                  إجمالي الصلاحيات الممنوحة ({grantedList.length} من {totalPermsCount}):
                                 </span>
                               </div>
                               <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
@@ -1199,7 +1465,7 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                                   grantedList.map((g) => (
                                     <span
                                       key={g.key}
-                                      className="px-2 py-0.5 rounded-md bg-emerald-100/80 text-emerald-800 border border-emerald-200 text-[10px] font-bold"
+                                      className="px-2 py-0.5 rounded-md bg-emerald-100/80 text-emerald-900 border border-emerald-200 text-[10px] font-bold"
                                     >
                                       {g.label}
                                     </span>
@@ -1214,14 +1480,21 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                                 <span className="font-bold text-slate-700">
                                   الأعمدة المصرح بتعديلها في الجدول:
                                 </span>
-                                <span className="text-[10px] font-black px-2 py-0.2 rounded-full bg-blue-100 text-blue-800">
-                                  {Array.isArray(u.allowedColumns) ? u.allowedColumns.length : dynamicTableColumns.length} من {dynamicTableColumns.length} عمود
+                                <span className="text-[10px] font-black px-2 py-0.2 rounded-full bg-blue-100 text-[#002855]">
+                                  {Array.isArray(u.allowedColumns)
+                                    ? u.allowedColumns.length
+                                    : dynamicTableColumns.length}{' '}
+                                  من {dynamicTableColumns.length} عمود
                                 </span>
                               </div>
                               <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
                                 {dynamicTableColumns.map((col) => {
                                   const isUniversal = Boolean(col.isUniversallyEditable);
-                                  const isColAllowed = isUniversal || (Array.isArray(u.allowedColumns) ? u.allowedColumns.includes(col.field) : true);
+                                  const isColAllowed =
+                                    isUniversal ||
+                                    (Array.isArray(u.allowedColumns)
+                                      ? u.allowedColumns.includes(col.field)
+                                      : true);
                                   if (!isColAllowed) return null;
                                   return (
                                     <span
@@ -1229,10 +1502,10 @@ export const PermissionsManagerModal: React.FC<PermissionsManagerModalProps> = (
                                       className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
                                         isUniversal
                                           ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                                          : 'bg-blue-50 text-blue-800 border border-blue-200'
+                                          : 'bg-blue-50 text-[#002855] border border-blue-200'
                                       }`}
                                     >
-                                      {col.title} {isUniversal && '⭐'}
+                                      {col.title}
                                     </span>
                                   );
                                 })}

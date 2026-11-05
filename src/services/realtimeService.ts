@@ -45,14 +45,17 @@ export class RealtimeService {
   private lastMutationTimestamp = 0;
 
   constructor() {
-    this.isPreviewObserver = false;
+    this.isPreviewObserver = isPlatformRunningInStudioIframe();
     // Always generate a unique per-tab/per-window clientId in memory so duplicated browser tabs never collide
-    this.clientId = 'user-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 8);
+    this.clientId = (this.isPreviewObserver ? 'preview-' : 'user-') + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 8);
     
+    const channelName = this.isPreviewObserver ? 'procedure155_preview_sandbox_channel' : 'procedure155_realtime_channel';
+    const storagePulseKey = this.isPreviewObserver ? 'preview_sandbox_p155_sync_pulse' : 'p155_sync_pulse';
+
     // BroadcastChannel for instant local browser tab-to-tab sync
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
-        this.broadcastChannel = new BroadcastChannel('procedure155_realtime_channel');
+        this.broadcastChannel = new BroadcastChannel(channelName);
         this.broadcastChannel.onmessage = (event) => {
           if (event.data && event.data.senderId !== this.clientId) {
             if (event.data.version && event.data.version > this.currentVersion) {
@@ -69,7 +72,7 @@ export class RealtimeService {
     // LocalStorage storage event fallback for cross-tab sync (works across all browsers)
     if (typeof window !== 'undefined') {
       window.addEventListener('storage', (e) => {
-        if (e.key === 'p155_sync_pulse' && e.newValue) {
+        if (e.key === storagePulseKey && e.newValue) {
           try {
             const data = JSON.parse(e.newValue);
             if (data && data.senderId !== this.clientId && data.event) {
@@ -84,26 +87,38 @@ export class RealtimeService {
     }
 
     if (typeof window !== 'undefined') {
-      this.initConnection();
-      this.initLifecycleAndVisibilityListeners();
-      this.initWatchdogAndBackgroundPolling();
-      this.initFirestoreLiveSnapshot();
+      if (this.isPreviewObserver) {
+        this.status = 'connected';
+      } else {
+        this.initConnection();
+        this.initLifecycleAndVisibilityListeners();
+        this.initWatchdogAndBackgroundPolling();
+      }
     }
   }
 
   private firestoreLivePulseWriter: ((event: RealtimeEvent) => void) | null = null;
+  private firestoreLivePulseUnsubscribe: (() => void) | null = null;
 
   private initFirestoreLiveSnapshot() {
+    if (this.isPreviewObserver) return;
+    // Direct client-side Firestore live_pulse is disabled by default because all real-time
+    // multi-user synchronization is handled authoritatively via WebSocket (/ws), SSE (/api/events),
+    // HTTP Delta Polling (/api/delta), and BroadcastChannel without consuming client Firestore read quota.
+    if (typeof window === 'undefined' || window.localStorage?.getItem('sec_qcms_enable_direct_client_firestore_pulse') !== 'true') {
+      return;
+    }
     try {
-      import('../firebase').then(({ db: firestoreDb, handleFirestoreError, OperationType }) => {
-        if (!firestoreDb) return;
+      import('../firebase').then(({ db: firestoreDb, isFirestoreQuotaError, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted }) => {
+        if (!firestoreDb || isFirestoreQuotaExhausted()) return;
         import('firebase/firestore').then(({ doc, onSnapshot, setDoc }) => {
+          if (isFirestoreQuotaExhausted()) return;
           const SERVER_VAULT_KEY = 'sec_qcms_155_vault_c497b379_4418_4a34_9623_987a3f506df0_v1';
-          const pulseDocKey = `serverVaults/${SERVER_VAULT_KEY}/live_pulse/sync`;
           const pulseDocRef = doc(firestoreDb, 'serverVaults', SERVER_VAULT_KEY, 'live_pulse', 'sync');
           let isFirstSnapshot = true;
 
           this.firestoreLivePulseWriter = (event: RealtimeEvent) => {
+            if (isFirestoreQuotaExhausted()) return;
             if (
               !event ||
               event.type === 'USER_PRESENCE' ||
@@ -125,7 +140,7 @@ export class RealtimeService {
                   version: event.version || (this.currentVersion + 1)
                 });
               }
-              const pulseVersion = Math.max(Date.now(), Number(event.version) || 0, this.currentVersion + 1);
+              const pulseVersion = Date.now();
               setDoc(pulseDocRef, {
                 vaultKey: SERVER_VAULT_KEY,
                 pulseId: 'sync',
@@ -137,22 +152,25 @@ export class RealtimeService {
                 senderRole: event.senderRole || '',
                 senderDevice: event.senderDevice || '',
                 version: pulseVersion,
+                serverVersion: Number(event.version) || this.currentVersion,
                 updatedAtIso: new Date().toISOString(),
                 payloadJson
-              }).catch(() => {});
+              }).catch((writeErr) => {
+                if (isFirestoreQuotaError(writeErr)) {
+                  markFirestoreQuotaExhausted();
+                  this.firestoreLivePulseWriter = null;
+                }
+              });
             } catch (_) {}
           };
 
-          onSnapshot(pulseDocRef, (snap) => {
+          const unsub = onSnapshot(pulseDocRef, (snap) => {
             if (isFirstSnapshot) {
               isFirstSnapshot = false;
               if (snap.exists()) {
                 const initData = snap.data();
                 if (initData?.eventId) {
                   this.markEventProcessed(String(initData.eventId));
-                }
-                if (typeof initData?.version === 'number' && initData.version > this.currentVersion) {
-                  this.currentVersion = initData.version;
                 }
               }
               return;
@@ -162,13 +180,9 @@ export class RealtimeService {
             const data = snap.data();
             if (data && data.senderId !== this.clientId && data.payloadJson) {
               try {
-                const incomingVer = Number(data.version) || (this.currentVersion + 1);
                 const payload = JSON.parse(data.payloadJson);
 
                 if (payload?.truncated || payload?.requiresFullSync || data.eventType === 'SYNC_ALL') {
-                  if (incomingVer > this.currentVersion) {
-                    this.currentVersion = incomingVer;
-                  }
                   this.reconcileWithServer(true).catch(() => {});
                   return;
                 }
@@ -182,27 +196,27 @@ export class RealtimeService {
                   senderEmail: data.senderEmail,
                   senderRole: data.senderRole,
                   senderDevice: data.senderDevice,
-                  timestamp: data.updatedAtIso || new Date().toISOString(),
-                  version: incomingVer
+                  timestamp: data.updatedAtIso || new Date().toISOString()
                 };
-                if (event.version && event.version > this.currentVersion) {
-                  this.currentVersion = event.version;
-                }
                 this.notifyListeners(event);
               } catch (_) {}
             }
           }, (err) => {
-            try {
-              handleFirestoreError(err, OperationType.GET, pulseDocKey);
-            } catch (handledErr) {
-              console.warn('[Firestore LiveSnapshot] Listener warning:', (handledErr as any)?.message || err);
+            if (isFirestoreQuotaError(err)) {
+              markFirestoreQuotaExhausted();
+            }
+            this.firestoreLivePulseWriter = null;
+            if (this.firestoreLivePulseUnsubscribe) {
+              try {
+                this.firestoreLivePulseUnsubscribe();
+              } catch (_) {}
+              this.firestoreLivePulseUnsubscribe = null;
             }
           });
+          this.firestoreLivePulseUnsubscribe = unsub;
         });
       });
-    } catch (err) {
-      console.warn('[Firestore LiveSnapshot] Init error:', err);
-    }
+    } catch (_) {}
   }
 
   private generateEventId(prefix = 'evt'): string {
@@ -344,8 +358,23 @@ export class RealtimeService {
     if (!changedKeys && isRemote && existing) {
       const diffKeys: string[] = [];
       const ignored = new Set(['id', 'updatedAt', 'lastEditedAt', 'lastUpdatedBy', 'recordVersion', 'fieldUpdatedAt', 'auditSyncStatus']);
+      const isFieldDifferentFast = (key: string, a: any, b: any): boolean => {
+        if (a === b) return false;
+        if (a == null || b == null) return a !== b;
+        if (typeof a !== 'object' && typeof b !== 'object') return a !== b;
+        if (key === 'photos' || key === 'photosFile') {
+          if (Array.isArray(a) && Array.isArray(b)) {
+            if (a.length !== b.length) return true;
+            for (let i = 0; i < a.length; i++) {
+              if (a[i]?.id !== b[i]?.id || a[i]?.name !== b[i]?.name || a[i]?.caption !== b[i]?.caption) return true;
+            }
+            return false;
+          }
+        }
+        return JSON.stringify(a) !== JSON.stringify(b);
+      };
       for (const k of Object.keys(incoming)) {
-        if (!ignored.has(k) && JSON.stringify((incoming as any)[k]) !== JSON.stringify((existing as any)[k])) {
+        if (!ignored.has(k) && isFieldDifferentFast(k, (incoming as any)[k], (existing as any)[k])) {
           diffKeys.push(k);
         }
       }
@@ -430,8 +459,64 @@ export class RealtimeService {
       if (!exAudit) return incAudit;
       if (!incAudit) return exAudit;
       const mergedAudit: any = { ...exAudit, ...incAudit };
+
+      // Merge primary 9-item supportChecklist & evaluatedKeys per item using itemUpdatedAt
+      if (exAudit.supportChecklist || incAudit.supportChecklist) {
+        const exTimes = exAudit.itemUpdatedAt || {};
+        const incTimes = incAudit.itemUpdatedAt || {};
+        const mergedTimes: Record<string, string> = { ...exTimes, ...incTimes };
+        const mergedSupport: Record<string, string> = {
+          ...(exAudit.supportChecklist || {}),
+          ...(incAudit.supportChecklist || {})
+        };
+        const exEvalSet = new Set<string>(Array.isArray(exAudit.evaluatedKeys) ? exAudit.evaluatedKeys : []);
+        const incEvalSet = new Set<string>(Array.isArray(incAudit.evaluatedKeys) ? incAudit.evaluatedKeys : []);
+        const mergedEvalSet = new Set<string>([...exEvalSet, ...incEvalSet]);
+
+        const allItemKeys = new Set<string>([
+          ...Object.keys(exAudit.supportChecklist || {}),
+          ...Object.keys(incAudit.supportChecklist || {}),
+          ...Object.keys(exTimes),
+          ...Object.keys(incTimes)
+        ]);
+
+        for (const itemKey of allItemKeys) {
+          const tEx = exTimes[itemKey] ? new Date(exTimes[itemKey]).getTime() : 0;
+          const tInc = incTimes[itemKey] ? new Date(incTimes[itemKey]).getTime() : 0;
+          if (tEx > tInc) {
+            if (exAudit.supportChecklist && exAudit.supportChecklist[itemKey] !== undefined) {
+              mergedSupport[itemKey] = exAudit.supportChecklist[itemKey];
+            }
+            if (exEvalSet.has(itemKey)) mergedEvalSet.add(itemKey);
+            else mergedEvalSet.delete(itemKey);
+            mergedTimes[itemKey] = exTimes[itemKey];
+          } else if (tInc > tEx) {
+            if (incAudit.supportChecklist && incAudit.supportChecklist[itemKey] !== undefined) {
+              mergedSupport[itemKey] = incAudit.supportChecklist[itemKey];
+            }
+            if (incEvalSet.has(itemKey)) mergedEvalSet.add(itemKey);
+            else mergedEvalSet.delete(itemKey);
+            mergedTimes[itemKey] = incTimes[itemKey];
+          }
+        }
+
+        mergedAudit.supportChecklist = mergedSupport;
+        mergedAudit.evaluatedKeys = Array.from(mergedEvalSet);
+        mergedAudit.itemUpdatedAt = mergedTimes;
+      }
+
       for (const k of Object.keys({ ...exAudit, ...incAudit })) {
-        if (k === 'mainStatus' || k === 'lastUpdatedAt' || k === 'lastUpdatedBy') continue;
+        if (
+          k === 'mainStatus' ||
+          k === 'lastUpdatedAt' ||
+          k === 'lastUpdatedBy' ||
+          k === 'supportChecklist' ||
+          k === 'evaluatedKeys' ||
+          k === 'itemUpdatedAt' ||
+          k === 'compliancePercentage'
+        ) {
+          continue;
+        }
         const exCat = exAudit[k];
         const incCat = incAudit[k];
         if (exCat && typeof exCat === 'object' && incCat && typeof incCat === 'object') {
@@ -451,11 +536,49 @@ export class RealtimeService {
       return mergedAudit;
     };
 
-    if (existing.pdcAudit && incoming.pdcAudit) {
+    if (existing.pdcAudit && incoming.pdcAudit && typeof existing.pdcAudit === 'object' && typeof incoming.pdcAudit === 'object') {
       base.pdcAudit = mergeAuditColumnPerCategory(existing.pdcAudit, incoming.pdcAudit);
     }
-    if (existing.constructionAudit && incoming.constructionAudit) {
+    if (existing.constructionAudit && incoming.constructionAudit && typeof existing.constructionAudit === 'object' && typeof incoming.constructionAudit === 'object') {
       base.constructionAudit = mergeAuditColumnPerCategory(existing.constructionAudit, incoming.constructionAudit);
+    }
+    if (existing.technicalSupportAudit && incoming.technicalSupportAudit) {
+      const exTs: any = existing.technicalSupportAudit;
+      const incTs: any = incoming.technicalSupportAudit;
+      const exTimes = exTs.itemUpdatedAt || {};
+      const incTimes = incTs.itemUpdatedAt || {};
+      const mergedTimes: Record<string, string> = { ...exTimes, ...incTimes };
+      const exEvalSet = new Set<string>(Array.isArray(exTs.evaluatedKeys) ? exTs.evaluatedKeys : []);
+      const incEvalSet = new Set<string>(Array.isArray(incTs.evaluatedKeys) ? incTs.evaluatedKeys : []);
+      const mergedEvalSet = new Set<string>([...exEvalSet, ...incEvalSet]);
+      const allKeys = new Set<string>([...Object.keys(exTimes), ...Object.keys(incTimes)]);
+      for (const k of allKeys) {
+        const tEx = exTimes[k] ? new Date(exTimes[k]).getTime() : 0;
+        const tInc = incTimes[k] ? new Date(incTimes[k]).getTime() : 0;
+        if (tEx > tInc) {
+          if (exEvalSet.has(k)) mergedEvalSet.add(k);
+          else mergedEvalSet.delete(k);
+          mergedTimes[k] = exTimes[k];
+          if ((existing as any)[k] !== undefined) {
+            (base as any)[k] = (existing as any)[k];
+          }
+        } else if (tInc > tEx) {
+          if (incEvalSet.has(k)) mergedEvalSet.add(k);
+          else mergedEvalSet.delete(k);
+          mergedTimes[k] = incTimes[k];
+          if ((incoming as any)[k] !== undefined) {
+            (base as any)[k] = (incoming as any)[k];
+          }
+        }
+      }
+      base.technicalSupportAudit = {
+        ...exTs,
+        ...incTs,
+        evaluatedKeys: Array.isArray(incTs.evaluatedKeys) && Object.keys(exTimes).length === 0 && Object.keys(incTimes).length === 0
+          ? incTs.evaluatedKeys
+          : Array.from(mergedEvalSet),
+        itemUpdatedAt: mergedTimes
+      } as any;
     }
 
     // Apply persistent Anti-Rollback WAL ledger protection
@@ -484,7 +607,8 @@ export class RealtimeService {
   /**
    * Broadcast updated user identity to all connected peers immediately
    */
-  public announceUserIdentity(): void {
+  public announceUserIdentity(triggerReconcile = true): void {
+    if (this.isPreviewObserver) return;
     const meta = this.getSenderMeta();
     const presenceEvent: RealtimeEvent = {
       type: 'USER_PRESENCE',
@@ -502,7 +626,9 @@ export class RealtimeService {
         this.ws.send(JSON.stringify(presenceEvent));
       } catch (_) {}
     }
-    this.reconcileWithServer(false);
+    if (triggerReconcile) {
+      this.reconcileWithServer(false);
+    }
   }
 
   /**
@@ -588,6 +714,7 @@ export class RealtimeService {
    * Flushes any mutations that were queued while offline or during connection drops.
    */
   public async flushOfflineMutationQueue() {
+    if (this.isPreviewObserver) return;
     const queue = vaultService.getOfflineQueue();
     const meta = this.getSenderMeta();
 
@@ -654,6 +781,7 @@ export class RealtimeService {
    * 2. Polls /api/sync/version every 1.5s as an ultra-fast delta catch-up check and flushes any pending WAL entries.
    */
   private initWatchdogAndBackgroundPolling() {
+    if (this.isPreviewObserver) return;
     if (this.watchdogTimer) clearInterval(this.watchdogTimer);
     if (this.pollIntervalTimer) clearInterval(this.pollIntervalTimer);
 
@@ -670,16 +798,24 @@ export class RealtimeService {
         } catch (_) {}
       }
 
-      if (now - this.lastServerMessageTime > 30000) {
+      if (now - this.lastServerMessageTime > 20000) {
         this.initConnection();
       }
       this.flushOfflineMutationQueue().catch(() => {});
-    }, 8000);
+    }, 6000);
 
-    // Active multi-user delta poll every 1.5s to ensure instant catch-up across all network conditions
+    // High-speed multi-user delta poll so any change by any user is caught and broadcast immediately
+    let lastPollTime = 0;
     this.pollIntervalTimer = setInterval(() => {
-      this.reconcileWithServer(false);
-    }, 1500);
+      if (this.activeMutationsCount > 0) return;
+      const now = Date.now();
+      const wsOpen = Boolean(this.ws && this.ws.readyState === WebSocket.OPEN);
+      const targetInterval = wsOpen ? 4500 : 1200;
+      if (now - lastPollTime >= targetInterval) {
+        lastPollTime = now;
+        this.reconcileWithServer(false);
+      }
+    }, 1200);
   }
 
   /**
@@ -687,6 +823,7 @@ export class RealtimeService {
    * and reconcile full state when needed.
    */
   public async reconcileWithServer(force = false): Promise<void> {
+    if (this.isPreviewObserver) return;
     if (this.isReconciling && !force) return;
     this.isReconciling = true;
     const startTs = performance.now();
@@ -743,12 +880,12 @@ export class RealtimeService {
           requiresFullFetch = true;
         }
 
-        // Do not overwrite state with a full SYNC_ALL while a local mutation is actively in flight or within 1s of a local save
-        const isSafeToFullSync = force || (!this.hasActiveInFlightEdits() && Date.now() - this.lastMutationTimestamp > 1000);
+        // Do not overwrite state with a full SYNC_ALL while a local mutation is actively in flight or within 400ms of a local save
+        const isSafeToFullSync = force || (!this.hasActiveInFlightEdits() && Date.now() - this.lastMutationTimestamp > 400);
         if (requiresFullFetch && isSafeToFullSync) {
           const fullData = await this.fetchAllData(true);
           // Re-verify after network download completes so an edit made during the download is never rolled back!
-          const stillSafeAfterFetch = force || (!this.hasActiveInFlightEdits() && Date.now() - this.lastMutationTimestamp > 1000);
+          const stillSafeAfterFetch = force || (!this.hasActiveInFlightEdits() && Date.now() - this.lastMutationTimestamp > 400);
           if (stillSafeAfterFetch && fullData && !(fullData as any).networkFallback && Array.isArray(fullData.workOrders)) {
             this.currentVersion = Number((fullData as any).version) || serverVer || this.currentVersion;
             this.recordKnownOrders(fullData.workOrders);
@@ -771,6 +908,10 @@ export class RealtimeService {
   }
 
   private initConnection() {
+    if (this.isPreviewObserver) {
+      this.setStatus('connected');
+      return;
+    }
     this.setStatus('connecting');
 
     try {
@@ -807,7 +948,7 @@ export class RealtimeService {
           clearTimeout(this.reconnectTimer);
           this.reconnectTimer = null;
         }
-        this.announceUserIdentity();
+        this.announceUserIdentity(false);
         this.flushOfflineMutationQueue();
       };
 
@@ -835,10 +976,36 @@ export class RealtimeService {
             return;
           }
 
-          if (event.version && event.version > this.currentVersion) {
-            this.currentVersion = event.version;
-          } else if (event.type === 'SYNC_ALL' && event.payload?.version) {
-            this.currentVersion = event.payload.version;
+          if (event.type === 'PLATFORM_PUBLISHED') {
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('p155:platform_published', { detail: event.payload }));
+            }
+          }
+
+          if (event.payload?.deployId && typeof window !== 'undefined') {
+            const deployId = String(event.payload.deployId);
+            const storedDeployId = sessionStorage.getItem('p155_server_deploy_id');
+            if (!storedDeployId) {
+              sessionStorage.setItem('p155_server_deploy_id', deployId);
+            } else if (storedDeployId !== deployId) {
+              sessionStorage.setItem('p155_server_deploy_id', deployId);
+              window.dispatchEvent(new CustomEvent('p155:platform_published', { detail: event.payload }));
+            }
+          }
+
+          const incomingSyncVersion = event.version || (event.type === 'SYNC_ALL' ? event.payload?.version : undefined);
+          if (
+            event.type === 'SYNC_ALL' &&
+            incomingSyncVersion &&
+            incomingSyncVersion === this.currentVersion &&
+            Date.now() - this.lastFetchTimestamp < 4000 &&
+            !this.hasActiveInFlightEdits()
+          ) {
+            return;
+          }
+
+          if (typeof incomingSyncVersion === 'number' && incomingSyncVersion > 0) {
+            this.currentVersion = Math.max(this.currentVersion, incomingSyncVersion);
           }
 
           this.notifyListeners(event);
@@ -884,6 +1051,21 @@ export class RealtimeService {
         this.lastServerMessageTime = Date.now();
         try {
           const data: RealtimeEvent = JSON.parse(event.data);
+          if (data.type === 'PLATFORM_PUBLISHED') {
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('p155:platform_published', { detail: data.payload }));
+            }
+          }
+          if (data.payload?.deployId && typeof window !== 'undefined') {
+            const deployId = String(data.payload.deployId);
+            const storedDeployId = sessionStorage.getItem('p155_server_deploy_id');
+            if (!storedDeployId) {
+              sessionStorage.setItem('p155_server_deploy_id', deployId);
+            } else if (storedDeployId !== deployId) {
+              sessionStorage.setItem('p155_server_deploy_id', deployId);
+              window.dispatchEvent(new CustomEvent('p155:platform_published', { detail: data.payload }));
+            }
+          }
           if (data.version && data.version > this.currentVersion) {
             this.currentVersion = data.version;
           }
@@ -977,14 +1159,15 @@ export class RealtimeService {
     try {
       this.broadcastChannel?.postMessage(event);
       if (typeof window !== 'undefined' && window.localStorage) {
-        window.localStorage.setItem('p155_sync_pulse', JSON.stringify({
+        const pulseKey = this.isPreviewObserver ? 'preview_sandbox_p155_sync_pulse' : 'p155_sync_pulse';
+        window.localStorage.setItem(pulseKey, JSON.stringify({
           event,
           senderId: this.clientId,
           version: this.currentVersion,
           t: Date.now()
         }));
       }
-      if (this.firestoreLivePulseWriter) {
+      if (!this.isPreviewObserver && this.firestoreLivePulseWriter) {
         this.firestoreLivePulseWriter(event);
       }
     } catch (_) {}
@@ -1037,6 +1220,10 @@ export class RealtimeService {
     this.markEventProcessed(eventId);
     notificationService.processRealtimeEvent(event, false);
     this.postLocalPulse(event);
+
+    if (this.isPreviewObserver) {
+      return true;
+    }
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
@@ -1112,6 +1299,12 @@ export class RealtimeService {
       const currentVault = vaultService.getSavedWorkOrders();
       vaultService.saveWorkOrders([fullOrder, ...currentVault.filter(w => w && w.id !== fullOrder.id)]);
     } catch (_) {}
+
+    if (this.isPreviewObserver) {
+      const sandboxOrder: WorkOrder = { ...fullOrder, auditSyncStatus: 'synced' };
+      this.lastKnownOrdersMap.set(sandboxOrder.id, sandboxOrder);
+      return sandboxOrder;
+    }
 
     this.activeMutationsCount++;
 
@@ -1287,6 +1480,10 @@ export class RealtimeService {
     this.postLocalPulse(immediateBatchEvent);
     this.listeners.forEach(listener => listener(immediateBatchEvent));
 
+    if (this.isPreviewObserver) {
+      return createdOrders;
+    }
+
     this.activeMutationsCount++;
     try {
       const bodyStr = JSON.stringify({ eventId, orders: createdOrders, ...meta });
@@ -1456,20 +1653,25 @@ export class RealtimeService {
     // 1. Write-Ahead Log (WAL) & Local Vault Commit BEFORE network call (Zero-Rollback Guarantee)
     this.lastKnownOrdersMap.set(order.id, savingOrder);
     vaultService.recordWalFieldMutation(order.id, changedFields, savingOrder);
-    try {
-      const currentVault = vaultService.getSavedWorkOrders();
-      if (currentVault.some(w => w && w.id === savingOrder.id)) {
-        vaultService.saveWorkOrders(currentVault.map(w => (w && w.id === savingOrder.id ? savingOrder : w)));
-      } else {
-        vaultService.saveWorkOrders([savingOrder, ...currentVault]);
-      }
-    } catch (_) {}
+
+    // Strip heavy base64 strings from network/pulse payloads when photos/files were NOT among changedFields
+    const touchesHeavyFiles = changedFields.some(
+      f => f === 'photos' || f === 'photosFile' || f === 'photosFileData' || f === 'qualityNoteItems'
+    );
+    const networkOrderPayload: any = touchesHeavyFiles
+      ? savingOrder
+      : {
+          ...savingOrder,
+          photos: undefined,
+          photosFile: undefined,
+          photosFileData: undefined
+        };
 
     const savingEvent: RealtimeEvent = {
       eventId,
       type: 'UPDATE_ORDER',
       payload: {
-        ...savingOrder,
+        ...networkOrderPayload,
         changedFields
       } as any,
       ...meta,
@@ -1479,13 +1681,19 @@ export class RealtimeService {
 
     notificationService.processRealtimeEvent(savingEvent, false);
     this.postLocalPulse(savingEvent);
-    this.listeners.forEach(listener => listener(savingEvent));
+
+    if (this.isPreviewObserver) {
+      this.inFlightOrderFields.delete(order.id);
+      const sandboxSaved: WorkOrder = { ...savingOrder, auditSyncStatus: 'synced' };
+      this.lastKnownOrdersMap.set(order.id, sandboxSaved);
+      return sandboxSaved;
+    }
 
     this.activeMutationsCount++;
 
     try {
       const bodyStr = JSON.stringify({
-        ...savingOrder,
+        ...networkOrderPayload,
         changedFields,
         expectedRecordVersion: typeof order.recordVersion === 'number' ? order.recordVersion : undefined,
         ...meta,
@@ -1505,38 +1713,28 @@ export class RealtimeService {
 
         vaultService.markWalMutationAcked(order.id, serverOrder.recordVersion, serverOrder.updatedAt);
 
-        const confirmedOrder: WorkOrder = {
-          ...savingOrder,
-          ...serverOrder,
-          fieldUpdatedAt: {
-            ...fieldUpdatedAt,
-            ...(serverOrder.fieldUpdatedAt || {})
+        const confirmedOrder: WorkOrder = this.mergeIncomingOrderWithInFlight(
+          savingOrder,
+          {
+            ...savingOrder,
+            ...serverOrder,
+            photos: touchesHeavyFiles ? (serverOrder.photos ?? savingOrder.photos) : savingOrder.photos,
+            photosFile: touchesHeavyFiles ? (serverOrder.photosFile ?? savingOrder.photosFile) : savingOrder.photosFile,
+            fieldUpdatedAt: {
+              ...fieldUpdatedAt,
+              ...(serverOrder.fieldUpdatedAt || {})
+            },
+            auditSyncStatus: 'synced'
           },
-          auditSyncStatus: 'synced'
-        };
+          false
+        );
 
         this.lastKnownOrdersMap.set(order.id, confirmedOrder);
-        try {
-          const currentVault = vaultService.getSavedWorkOrders();
-          vaultService.saveWorkOrders(
-            currentVault.map(w => (w && w.id === confirmedOrder.id ? confirmedOrder : w))
-          );
-        } catch (_) {}
 
         if (typeof (serverOrder as any)?.version === 'number') {
           this.currentVersion = Math.max(this.currentVersion, (serverOrder as any).version);
         }
         vaultService.removeQueuedMutation(order.id);
-        const confirmEvent: RealtimeEvent = {
-          eventId: this.generateEventId('confirm-update'),
-          type: 'UPDATE_ORDER',
-          payload: confirmedOrder,
-          ...meta,
-          timestamp: new Date().toISOString(),
-          version: this.currentVersion
-        };
-        this.postLocalPulse(confirmEvent);
-        this.listeners.forEach(listener => listener(confirmEvent));
         return confirmedOrder;
       } else if (res.status === 409) {
         let errData: any = null;
@@ -1611,6 +1809,8 @@ export class RealtimeService {
     this.postLocalPulse(event);
     vaultService.markAsDeleted(id);
 
+    if (this.isPreviewObserver) return;
+
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
         this.ws.send(JSON.stringify(event));
@@ -1659,6 +1859,8 @@ export class RealtimeService {
     this.postLocalPulse(event);
     vaultService.markBatchAsDeleted(ids);
 
+    if (this.isPreviewObserver) return;
+
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
         this.ws.send(JSON.stringify(event));
@@ -1693,6 +1895,8 @@ export class RealtimeService {
 
     notificationService.processRealtimeEvent(event, false);
     this.postLocalPulse(event);
+
+    if (this.isPreviewObserver) return;
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
@@ -1740,6 +1944,7 @@ export class RealtimeService {
 
     notificationService.processRealtimeEvent(event, false);
     this.postLocalPulse(event);
+    if (this.isPreviewObserver) return newOffice;
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
@@ -1780,6 +1985,7 @@ export class RealtimeService {
 
     notificationService.processRealtimeEvent(event, false);
     this.postLocalPulse(event);
+    if (this.isPreviewObserver) return;
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
@@ -1815,6 +2021,7 @@ export class RealtimeService {
 
     notificationService.processRealtimeEvent(event, false);
     this.postLocalPulse(event);
+    if (this.isPreviewObserver) return;
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
@@ -1853,6 +2060,7 @@ export class RealtimeService {
 
     notificationService.processRealtimeEvent(event, false);
     this.postLocalPulse(event);
+    if (this.isPreviewObserver) return;
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
@@ -1888,6 +2096,7 @@ export class RealtimeService {
 
     notificationService.processRealtimeEvent(event, false);
     this.postLocalPulse(event);
+    if (this.isPreviewObserver) return;
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
@@ -1923,6 +2132,7 @@ export class RealtimeService {
 
     notificationService.processRealtimeEvent(event, false);
     this.postLocalPulse(event);
+    if (this.isPreviewObserver) return;
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
@@ -1955,8 +2165,8 @@ export class RealtimeService {
     deletedOrderIds?: string[];
     version?: number;
   }> {
-    // Reuse in-flight promise only if identical concurrent request is currently running
-    if (!force && this.inFlightFetchPromise) {
+    // Reuse in-flight promise when a concurrent fetch is already running in flight
+    if (this.inFlightFetchPromise) {
       return this.inFlightFetchPromise;
     }
 
@@ -1976,8 +2186,8 @@ export class RealtimeService {
           if (Array.isArray(data.workOrders)) {
             this.recordKnownOrders(data.workOrders);
           }
-          if (data.version) {
-            this.currentVersion = Math.max(this.currentVersion, data.version);
+          if (typeof data.version === 'number' && data.version > 0) {
+            this.currentVersion = data.version;
           }
           if (Array.isArray(data.notificationsLog)) {
             notificationService.syncFromServerLog(data.notificationsLog, this.clientId);
@@ -2017,6 +2227,7 @@ export class RealtimeService {
   }
 
   public async saveArchivedReport(report: ArchivedReportSnapshot): Promise<ArchivedReportSnapshot> {
+    if (this.isPreviewObserver) return report;
     const eventId = this.generateEventId('rep');
     const meta = this.getSenderMeta();
     try {
@@ -2035,6 +2246,7 @@ export class RealtimeService {
   }
 
   public async deleteArchivedReport(id: string): Promise<void> {
+    if (this.isPreviewObserver) return;
     try {
       await fetch(`/api/archived-reports/${id}`, {
         method: 'DELETE',
@@ -2080,6 +2292,7 @@ export class RealtimeService {
 
     notificationService.processRealtimeEvent(event, false);
     this.postLocalPulse(event);
+    if (this.isPreviewObserver) return newTable;
 
     try {
       const bodyStr = JSON.stringify({ ...newTable, ...meta, eventId });
@@ -2126,6 +2339,7 @@ export class RealtimeService {
 
     notificationService.processRealtimeEvent(event, false);
     this.postLocalPulse(event);
+    if (this.isPreviewObserver) return;
 
     try {
       const bodyStr = JSON.stringify({ ...table, ...meta, eventId });
@@ -2162,6 +2376,7 @@ export class RealtimeService {
 
     notificationService.processRealtimeEvent(event, false);
     this.postLocalPulse(event);
+    if (this.isPreviewObserver) return;
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
@@ -2197,13 +2412,27 @@ export class RealtimeService {
   }
 
   public async restoreServerBackup(filename: string): Promise<boolean> {
+    if (this.isPreviewObserver) return false;
     const meta = this.getSenderMeta();
+    const eventId = this.generateEventId('restore');
     try {
       const res = await fetch('/api/backups/restore', {
         method: 'POST',
         headers: this.getHeaders(),
-        body: JSON.stringify({ filename, ...meta })
+        body: JSON.stringify({ eventId, filename, ...meta })
       });
+      if (res.ok) {
+        const pulseEvent: RealtimeEvent = {
+          eventId,
+          type: 'RESTORE_SNAPSHOT',
+          payload: { requiresFullSync: true, actionType: 'restore', description: `استرجاع النسخة الاحتياطية (${filename})` },
+          ...meta,
+          timestamp: new Date().toISOString(),
+          version: this.currentVersion + 1
+        };
+        this.postLocalPulse(pulseEvent);
+        await this.reconcileWithServer(true);
+      }
       return res.ok;
     } catch (err) {
       console.warn('Failed restoring backup:', err);
@@ -2212,13 +2441,27 @@ export class RealtimeService {
   }
 
   public async importFullDatabase(data: any): Promise<boolean> {
+    if (this.isPreviewObserver) return false;
     const meta = this.getSenderMeta();
+    const eventId = this.generateEventId('import');
     try {
       const res = await fetch('/api/backup/import-full', {
         method: 'POST',
         headers: this.getHeaders(),
-        body: JSON.stringify({ ...data, ...meta })
+        body: JSON.stringify({ eventId, ...data, ...meta })
       });
+      if (res.ok && !data?.dryRun && !data?.previewOnly && !data?.isIntermediateBatch) {
+        const pulseEvent: RealtimeEvent = {
+          eventId,
+          type: 'RESTORE_SNAPSHOT',
+          payload: { requiresFullSync: true, actionType: 'import', description: 'استيراد ودمج نسخة احتياطية كاملة' },
+          ...meta,
+          timestamp: new Date().toISOString(),
+          version: this.currentVersion + 1
+        };
+        this.postLocalPulse(pulseEvent);
+        await this.reconcileWithServer(true);
+      }
       return res.ok;
     } catch (err) {
       console.warn('Failed importing full database:', err);
@@ -2378,6 +2621,10 @@ export class RealtimeService {
   }
 
   public async saveUser(user: Partial<PlatformUser>): Promise<{ user?: PlatformUser; users?: PlatformUser[] }> {
+    if (this.isPreviewObserver) {
+      const localUsers = vaultService.getSavedUsers() || [];
+      return { user: user as PlatformUser, users: localUsers };
+    }
     const eventId = this.generateEventId('usr');
     this.markEventProcessed(eventId);
     const meta = this.getSenderMeta();
@@ -2419,6 +2666,7 @@ export class RealtimeService {
   }
 
   public async broadcastUsers(users: PlatformUser[]): Promise<void> {
+    if (this.isPreviewObserver) return;
     const meta = this.getSenderMeta();
     const eventId = this.generateEventId('usr-all');
     this.markEventProcessed(eventId);
@@ -2441,6 +2689,9 @@ export class RealtimeService {
   }
 
   public async deleteUser(userId: string): Promise<PlatformUser[]> {
+    if (this.isPreviewObserver) {
+      return (vaultService.getSavedUsers() || []).filter(u => u && u.id !== userId);
+    }
     const eventId = this.generateEventId('usr-del');
     this.markEventProcessed(eventId);
     const meta = this.getSenderMeta();
@@ -2480,7 +2731,21 @@ export class RealtimeService {
     return data.users || [];
   }
 
+  public async triggerPlatformPublish(): Promise<boolean> {
+    if (this.isPreviewObserver) return false;
+    try {
+      const res = await fetch('/api/platform/publish', {
+        method: 'POST',
+        headers: this.getHeaders()
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   public async resetData(): Promise<void> {
+    if (this.isPreviewObserver) return;
     try {
       await fetch('/api/reset', {
         method: 'POST',

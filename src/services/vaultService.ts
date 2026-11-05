@@ -9,7 +9,7 @@ import {
   PlatformUser
 } from '../types';
 import { ensureDefaultSuperAdmins, isPlatformRunningInStudioIframe, isPurgedLegacyUserOrEmail } from '../utils/security';
-import { extractBackupEnvelope, normalizeLegacyWorkOrder } from '../utils/backupMergeEngine';
+import { analyzeAndMergeBackup, extractBackupEnvelope, normalizeLegacyWorkOrder } from '../utils/backupMergeEngine';
 import { ensurePhotosFileColumn } from '../data/initialData';
 
 export interface PendingMutation {
@@ -36,7 +36,7 @@ export interface WalOrderLedgerEntry {
   acked: boolean;
 }
 
-const IS_PREVIEW_SANDBOX = false;
+const IS_PREVIEW_SANDBOX = isPlatformRunningInStudioIframe();
 const KEY_PREFIX = IS_PREVIEW_SANDBOX ? 'preview_sandbox_' : '';
 
 const STORAGE_KEYS = {
@@ -65,6 +65,10 @@ const IDB_STORE_NAME = 'vault_store';
 class VaultService {
   private memoryOrdersCache: WorkOrder[] | null = null;
   private lastSavedOrdersRef: WorkOrder[] | null = null;
+  private memoryTombstonesCache: Set<string> | null = null;
+  private memoryWalCache: Record<string, WalOrderLedgerEntry> | null = null;
+  private pendingOrdersFlushTimer: any = null;
+  private pendingWalFlushTimer: any = null;
   private dbPromise: Promise<IDBDatabase | null> | null = null;
   private legacyPreviewDbPromise: Promise<IDBDatabase | null> | null = null;
   private cachedHarvestedData: {
@@ -81,8 +85,32 @@ class VaultService {
   }> | null = null;
 
   constructor() {
-    if (typeof window !== 'undefined' && 'indexedDB' in window) {
-      this.initIndexedDB();
+    if (typeof window !== 'undefined') {
+      if ('indexedDB' in window) {
+        this.initIndexedDB();
+      }
+      const flushAllSync = () => {
+        this.flushPendingWritesSync();
+      };
+      window.addEventListener('beforeunload', flushAllSync);
+      window.addEventListener('pagehide', flushAllSync);
+    }
+  }
+
+  public flushPendingWritesSync(): void {
+    if (this.pendingOrdersFlushTimer) {
+      clearTimeout(this.pendingOrdersFlushTimer);
+      this.pendingOrdersFlushTimer = null;
+      if (this.memoryOrdersCache) {
+        this.commitOrdersToStorageSync(this.memoryOrdersCache);
+      }
+    }
+    if (this.pendingWalFlushTimer) {
+      clearTimeout(this.pendingWalFlushTimer);
+      this.pendingWalFlushTimer = null;
+      if (this.memoryWalCache) {
+        this.commitWalToStorageSync(this.memoryWalCache);
+      }
     }
   }
 
@@ -225,20 +253,27 @@ class VaultService {
    * These IDs are NEVER resurrected or restored by sync unless explicitly undone.
    */
   public getTombstones(): Set<string> {
+    if (this.memoryTombstonesCache) {
+      return this.memoryTombstonesCache;
+    }
     const defaultTombstones: string[] = [];
     if (typeof window === 'undefined') return new Set(defaultTombstones);
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.TOMBSTONES);
       const arr = raw ? JSON.parse(raw) : [];
-      const set = new Set(Array.isArray(arr) ? arr : []);
+      const set = new Set<string>(Array.isArray(arr) ? arr : []);
       defaultTombstones.forEach(id => set.add(id));
+      this.memoryTombstonesCache = set;
       return set;
     } catch {
-      return new Set(defaultTombstones);
+      const fallback = new Set<string>(defaultTombstones);
+      this.memoryTombstonesCache = fallback;
+      return fallback;
     }
   }
 
   private saveTombstones(set: Set<string>): void {
+    this.memoryTombstonesCache = set;
     if (typeof window === 'undefined') return;
     try {
       // Keep up to 3000 most recent tombstones to prevent unbounded growth
@@ -345,9 +380,55 @@ class VaultService {
     }
   }
 
+  private stripHeavyAttachmentsForLocalStorage(wo: WorkOrder): WorkOrder {
+    if (!wo || typeof wo !== 'object') return wo;
+    const hasHeavyPhotos =
+      Array.isArray(wo.photos) &&
+      wo.photos.some((p: any) => (p?.dataUrl && p.dataUrl.length > 512) || (p?.url && p.url.startsWith('data:') && p.url.length > 512));
+    const hasHeavyFiles =
+      Array.isArray(wo.photosFile)
+        ? wo.photosFile.some((f: any) => f?.dataUrl && f.dataUrl.length > 512)
+        : Boolean((wo as any).photosFile?.dataUrl);
+    const hasHeavyNotes =
+      Array.isArray(wo.qualityNoteItems) &&
+      wo.qualityNoteItems.some(
+        (ni: any) =>
+          (Array.isArray(ni?.photos) && ni.photos.length > 0) ||
+          (Array.isArray(ni?.files) && ni.files.length > 0)
+      );
+
+    if (!hasHeavyPhotos && !hasHeavyFiles && !hasHeavyNotes && !(wo as any).photosFileData) {
+      return wo;
+    }
+
+    return {
+      ...wo,
+      photos: Array.isArray(wo.photos)
+        ? wo.photos.map((p: any) => ({
+            ...p,
+            dataUrl: '',
+            url: typeof p?.url === 'string' && p.url.startsWith('data:') ? '' : p?.url
+          }))
+        : [],
+      photosFile: Array.isArray(wo.photosFile)
+        ? wo.photosFile.map((f: any) => ({ ...f, dataUrl: '' }))
+        : (wo as any).photosFile && typeof (wo as any).photosFile === 'object'
+        ? { ...(wo as any).photosFile, dataUrl: '' }
+        : wo.photosFile,
+      photosFileData: undefined,
+      qualityNoteItems: Array.isArray(wo.qualityNoteItems)
+        ? wo.qualityNoteItems.map((ni: any) => ({
+            ...ni,
+            photos: [],
+            files: Array.isArray(ni?.files) ? ni.files.map((f: any) => ({ ...f, dataUrl: '' })) : ni?.files
+          }))
+        : wo.qualityNoteItems
+    };
+  }
+
   /**
    * Save work orders to local persistent storage immediately.
-   * Multi-tier: updates memory cache, IndexedDB (unlimited), and localStorage.
+   * Multi-tier: updates memory cache, IndexedDB (unlimited capacity for full photos/PDFs), and lightweight localStorage.
    * Guards against accidental empty-array overwrites unless allowEmptyOverwrite is explicitly true.
    */
   public saveWorkOrders(orders: WorkOrder[], allowEmptyOverwrite: boolean = false): void {
@@ -367,37 +448,39 @@ class VaultService {
     this.memoryOrdersCache = orders;
     this.lastSavedOrdersRef = orders;
 
-    // 1. Save to IndexedDB (asynchronous, holds photos and complete files with zero quota issues)
+    if (allowEmptyOverwrite) {
+      if (this.pendingOrdersFlushTimer) {
+        clearTimeout(this.pendingOrdersFlushTimer);
+        this.pendingOrdersFlushTimer = null;
+      }
+      this.commitOrdersToStorageSync(orders);
+      return;
+    }
+
+    // Debounce storage serialization by 90ms so rapid UI edits never block the main thread,
+    // while beforeunload/pagehide flushes synchronously if the user refreshes immediately.
+    if (this.pendingOrdersFlushTimer) {
+      clearTimeout(this.pendingOrdersFlushTimer);
+    }
+    this.pendingOrdersFlushTimer = setTimeout(() => {
+      this.pendingOrdersFlushTimer = null;
+      if (this.memoryOrdersCache) {
+        this.commitOrdersToStorageSync(this.memoryOrdersCache);
+      }
+    }, 90);
+  }
+
+  private commitOrdersToStorageSync(orders: WorkOrder[]): void {
+    if (typeof window === 'undefined' || !Array.isArray(orders)) return;
+    // 1. Save full orders (including all photos and PDF attachments) to IndexedDB asynchronously (unlimited capacity)
     this.idbSet(STORAGE_KEYS.WORK_ORDERS, orders);
 
-    // 2. Save to localStorage (synchronous fallback for instant cold boot)
+    // 2. Save lightweight orders (without multi-megabyte base64 strings) to localStorage in < 1ms
     try {
-      localStorage.setItem(STORAGE_KEYS.WORK_ORDERS, JSON.stringify(orders));
+      const lightweightOrders = orders.map(w => this.stripHeavyAttachmentsForLocalStorage(w));
+      localStorage.setItem(STORAGE_KEYS.WORK_ORDERS, JSON.stringify(lightweightOrders));
       localStorage.setItem(STORAGE_KEYS.LAST_SYNC, new Date().toISOString());
-    } catch (err) {
-      // If photos or inspection files caused quota exceeded, save orders without heavy base64 dataUrl to localStorage
-      try {
-        const lightweightOrders = orders.map(w => ({
-          ...w,
-          photos: Array.isArray(w.photos) ? w.photos.map(p => ({ ...p, dataUrl: '', url: p?.url?.startsWith('data:') ? '' : p?.url })) : [],
-          photosFile: Array.isArray(w.photosFile)
-            ? w.photosFile.map((f: any) => ({ ...f, dataUrl: '' }))
-            : (w as any).photosFile && typeof (w as any).photosFile === 'object'
-            ? { ...(w as any).photosFile, dataUrl: '' }
-            : w.photosFile,
-          photosFileData: undefined,
-          qualityNoteItems: Array.isArray(w.qualityNoteItems)
-            ? w.qualityNoteItems.map((ni: any) => ({
-                ...ni,
-                photos: Array.isArray(ni?.photos) ? ni.photos.map((p: any) => ({ ...p, dataUrl: '', url: '' })) : ni?.photos,
-                files: Array.isArray(ni?.files) ? ni.files.map((f: any) => ({ ...f, dataUrl: '' })) : ni?.files
-              }))
-            : w.qualityNoteItems
-        }));
-        localStorage.setItem(STORAGE_KEYS.WORK_ORDERS, JSON.stringify(lightweightOrders));
-        localStorage.setItem(STORAGE_KEYS.LAST_SYNC, new Date().toISOString());
-      } catch (_) {}
-    }
+    } catch (_) {}
   }
 
   /**
@@ -422,14 +505,11 @@ class VaultService {
     try {
       const tombstones = this.getTombstones();
       const mergedById = new Map<string, WorkOrder>();
-      const candidateKeys = [
-        STORAGE_KEYS.WORK_ORDERS,
-        `preview_sandbox_${STORAGE_KEYS.WORK_ORDERS.replace(/^preview_sandbox_/, '')}`
-      ];
-      for (const k of candidateKeys) {
+      const primaryRaw = localStorage.getItem(STORAGE_KEYS.WORK_ORDERS);
+      const candidateRaws: string[] = primaryRaw ? [primaryRaw] : [];
+
+      for (const raw of candidateRaws) {
         try {
-          const raw = localStorage.getItem(k);
-          if (!raw) continue;
           const parsed = JSON.parse(raw);
           if (!Array.isArray(parsed)) continue;
           for (const w of parsed) {
@@ -450,11 +530,6 @@ class VaultService {
         } catch (_) {}
       }
       const filtered = Array.from(mergedById.values());
-      if (filtered.length > 0) {
-        try {
-          localStorage.setItem(STORAGE_KEYS.WORK_ORDERS, JSON.stringify(filtered));
-        } catch (_) {}
-      }
       this.memoryOrdersCache = filtered;
       return filtered;
     } catch (err) {
@@ -673,10 +748,7 @@ class VaultService {
     if (typeof window === 'undefined') return [];
     try {
       const tableMap = new Map<string, MonthTable>();
-      const candidateKeys = [
-        STORAGE_KEYS.MONTH_TABLES,
-        `preview_sandbox_${STORAGE_KEYS.MONTH_TABLES.replace(/^preview_sandbox_/, '')}`
-      ];
+      const candidateKeys = [STORAGE_KEYS.MONTH_TABLES];
       for (const k of candidateKeys) {
         try {
           const raw = localStorage.getItem(k);
@@ -707,10 +779,7 @@ class VaultService {
       const tombstones = this.getTombstones();
       const nowMs = Date.now();
       const itemMap = new Map<string, PendingMutation>();
-      const candidateKeys = [
-        STORAGE_KEYS.OFFLINE_QUEUE,
-        `preview_sandbox_${STORAGE_KEYS.OFFLINE_QUEUE.replace(/^preview_sandbox_/, '')}`
-      ];
+      const candidateKeys = [STORAGE_KEYS.OFFLINE_QUEUE];
       let hadStaleItems = false;
       for (const k of candidateKeys) {
         try {
@@ -786,12 +855,12 @@ class VaultService {
    */
   public getMutationWal(): Record<string, WalOrderLedgerEntry> {
     if (typeof window === 'undefined' || isPlatformRunningInStudioIframe()) return {};
+    if (this.memoryWalCache) {
+      return this.memoryWalCache;
+    }
     try {
       const mergedWal: Record<string, WalOrderLedgerEntry> = {};
-      const candidateKeys = [
-        `preview_sandbox_${STORAGE_KEYS.MUTATION_WAL.replace(/^preview_sandbox_/, '')}`,
-        STORAGE_KEYS.MUTATION_WAL
-      ];
+      const candidateKeys = [STORAGE_KEYS.MUTATION_WAL];
       for (const k of candidateKeys) {
         try {
           const raw = localStorage.getItem(k);
@@ -820,18 +889,35 @@ class VaultService {
           }
         } catch (_) {}
       }
+      this.memoryWalCache = mergedWal;
       return mergedWal;
     } catch {
+      this.memoryWalCache = {};
       return {};
     }
   }
 
   public saveMutationWal(wal: Record<string, WalOrderLedgerEntry>): void {
     if (typeof window === 'undefined' || isPlatformRunningInStudioIframe()) return;
+    this.memoryWalCache = wal;
+    if (this.pendingWalFlushTimer) {
+      clearTimeout(this.pendingWalFlushTimer);
+    }
+    this.pendingWalFlushTimer = setTimeout(() => {
+      this.pendingWalFlushTimer = null;
+      if (this.memoryWalCache) {
+        this.commitWalToStorageSync(this.memoryWalCache);
+      }
+    }, 90);
+  }
+
+  private commitWalToStorageSync(wal: Record<string, WalOrderLedgerEntry>): void {
+    if (typeof window === 'undefined' || isPlatformRunningInStudioIframe()) return;
     try {
       // Prune acknowledged entries older than 48 hours to keep storage compact while maintaining a strong anti-rollback window
       const cutoffMs = Date.now() - 48 * 60 * 60 * 1000;
       const pruned: Record<string, WalOrderLedgerEntry> = {};
+      const lightForLs: Record<string, WalOrderLedgerEntry> = {};
       const keys = Object.keys(wal);
       for (const k of keys.slice(-800)) {
         const entry = wal[k];
@@ -839,9 +925,20 @@ class VaultService {
         const ts = new Date(entry.lastMutatedAt || 0).getTime();
         if (!entry.acked || ts >= cutoffMs) {
           pruned[k] = entry;
+          const lightFields: Record<string, WalFieldMutationEntry> = {};
+          for (const [fk, fv] of Object.entries(entry.fields || {})) {
+            if (fk === 'photos' || fk === 'photosFile' || fk === 'photosFileData' || fk === 'qualityNoteItems') continue;
+            lightFields[fk] = fv;
+          }
+          lightForLs[k] = {
+            ...entry,
+            createdOrder: entry.createdOrder ? this.stripHeavyAttachmentsForLocalStorage(entry.createdOrder) : undefined,
+            fields: lightFields
+          };
         }
       }
-      localStorage.setItem(STORAGE_KEYS.MUTATION_WAL, JSON.stringify(pruned));
+      this.memoryWalCache = pruned;
+      localStorage.setItem(STORAGE_KEYS.MUTATION_WAL, JSON.stringify(lightForLs));
       this.idbSet(STORAGE_KEYS.MUTATION_WAL, pruned);
     } catch (_) {}
   }
@@ -1007,7 +1104,7 @@ class VaultService {
     for (const entry of Object.values(wal)) {
       if (!entry || !entry.orderId || tombstones.has(entry.orderId)) continue;
       const ageMs = nowMs - new Date(entry.lastMutatedAt || 0).getTime();
-      if (ageMs > 20000) continue;
+      if (ageMs > 45000) continue;
       const hasUnackedField = Object.values(entry.fields || {}).some(f => !f.acked);
       if ((!entry.acked || hasUnackedField) && entry.createdOrder) {
         result.push(entry.createdOrder);
@@ -1086,9 +1183,12 @@ class VaultService {
     const serverVer = Number(serverOrder.recordVersion) || 1;
     const entryMutatedTime = new Date(entry.lastMutatedAt || 0).getTime();
 
-    if (entry.acked || entryAgeMs > 20000 || (serverVer >= (Number(entry.recordVersion) || 1) && serverOrderTime >= entryMutatedTime)) {
-      if (!entry.acked) {
+    if (entry.acked || entryAgeMs > 45000 || (serverVer >= (Number(entry.recordVersion) || 1) && serverOrderTime >= entryMutatedTime)) {
+      if (!entry.acked && (entryAgeMs > 45000 || (serverVer >= (Number(entry.recordVersion) || 1) && serverOrderTime >= entryMutatedTime))) {
         entry.acked = true;
+        for (const f of Object.values(entry.fields || {})) {
+          if (f) f.acked = true;
+        }
         wal[serverOrder.id] = entry;
         this.saveMutationWal(wal);
       }
@@ -1109,7 +1209,7 @@ class VaultService {
       const fieldTimeMs = new Date(fEntry.updatedAt || 0).getTime();
       const fieldAgeMs = nowMs - fieldTimeMs;
       const serverFieldTimeMs = new Date(serverOrder.fieldUpdatedAt?.[field] || serverOrder.updatedAt || 0).getTime();
-      const shouldKeepWalField = !fEntry.acked && fieldAgeMs <= 20000 && fieldTimeMs > serverFieldTimeMs;
+      const shouldKeepWalField = !fEntry.acked && fieldAgeMs <= 45000 && fieldTimeMs > serverFieldTimeMs;
 
       if (shouldKeepWalField) {
         if (field === 'photos' && Array.isArray(fEntry.value) && Array.isArray(serverOrder.photos)) {
@@ -1184,11 +1284,32 @@ class VaultService {
       };
 
       const existing = this.getSnapshots();
-      // Keep up to 60 snapshots with rotating eviction
+      // Keep up to 60 full snapshots in IndexedDB
       const updated = [snapshot, ...existing.slice(0, 59)];
-      localStorage.setItem(STORAGE_KEYS.SNAPSHOTS, JSON.stringify(updated));
-      localStorage.setItem(STORAGE_KEYS.LAST_AUTO_SNAPSHOT, String(Date.now()));
       this.idbSet(STORAGE_KEYS.SNAPSHOTS, updated);
+      try {
+        localStorage.setItem(STORAGE_KEYS.LAST_AUTO_SNAPSHOT, String(Date.now()));
+        // Keep only the 2 latest lightweight snapshots in localStorage to preserve quota for WAL & Audit Trail
+        const compactForLocalStorage = updated.slice(0, 2).map((s) => ({
+          ...s,
+          data: {
+            ...s.data,
+            workOrders: Array.isArray(s.data?.workOrders)
+              ? s.data.workOrders.map((w: any) => ({
+                  ...w,
+                  photos: [],
+                  photosFile: [],
+                  photosFileData: undefined
+                }))
+              : []
+          }
+        }));
+        localStorage.setItem(STORAGE_KEYS.SNAPSHOTS, JSON.stringify(compactForLocalStorage));
+      } catch {
+        try {
+          localStorage.removeItem(STORAGE_KEYS.SNAPSHOTS);
+        } catch (_) {}
+      }
       return snapshot;
     } catch (err) {
       console.warn('[VaultService] Failed to create snapshot:', err);
@@ -1324,7 +1445,10 @@ class VaultService {
     return JSON.stringify(bundle, null, 2);
   }
 
-  public importDatabaseFromJson(jsonStr: string): { 
+  public importDatabaseFromJson(
+    jsonStr: string,
+    options?: { replaceMode?: boolean }
+  ): { 
     success: boolean; 
     error?: string; 
     count?: number; 
@@ -1333,6 +1457,7 @@ class VaultService {
     data?: any;
   } {
     try {
+      const replaceMode = Boolean(options?.replaceMode);
       const envelope = extractBackupEnvelope(jsonStr);
       const parsed = (envelope.format !== 'invalid' && envelope.payload)
         ? envelope.payload
@@ -1343,12 +1468,29 @@ class VaultService {
 
       this.createSnapshot('نسخة احتياطية قبل الاستيراد الشامل', 'pre_update');
 
-      const tablesList = Array.isArray(parsed.monthTables)
-        ? parsed.monthTables
-        : (Array.isArray(parsed.tables) ? parsed.tables : null);
+      const currentLocalDb = {
+        workOrders: this.getSavedWorkOrders(),
+        monthTables: this.getSavedMonthTables() || [],
+        users: this.getSavedUsers() || [],
+        offices: this.getSavedOffices() || [],
+        columns: this.getSavedColumns() || [],
+        dropdownOptions: this.getSavedDropdownOptions() || {},
+        archivedReports: this.getSavedArchivedReports() || [],
+        deletedOrderIds: Array.from(this.getTombstones())
+      };
 
-      const normalizedOrders = Array.isArray(parsed.workOrders)
-        ? parsed.workOrders
+      const mergeResult = analyzeAndMergeBackup(currentLocalDb, parsed, {
+        preferIncomingOnConflict: true,
+        replaceMode
+      });
+
+      const mergedDb = mergeResult.report.valid && mergeResult.mergedDb ? mergeResult.mergedDb : parsed;
+      const tablesList = Array.isArray(mergedDb.monthTables)
+        ? mergedDb.monthTables
+        : (Array.isArray(mergedDb.tables) ? mergedDb.tables : null);
+
+      const normalizedOrders = Array.isArray(mergedDb.workOrders)
+        ? mergedDb.workOrders
             .map((w: any, idx: number) => normalizeLegacyWorkOrder(w, idx).order)
             .filter(Boolean)
         : [];
@@ -1357,35 +1499,37 @@ class VaultService {
         const activeImportedIds = new Set<string>(
           normalizedOrders.filter((w: any) => w && w.id).map((w: any) => String(w.id))
         );
-        const cleanDeletedIds = Array.isArray(parsed.deletedOrderIds)
-          ? parsed.deletedOrderIds.filter((id: string) => id && !activeImportedIds.has(id))
+        const cleanDeletedIds = replaceMode
+          ? []
+          : Array.isArray(mergedDb.deletedOrderIds)
+          ? mergedDb.deletedOrderIds.filter((id: string) => id && !activeImportedIds.has(id))
           : [];
         this.saveTombstones(new Set(cleanDeletedIds));
         this.unmarkBatchDeleted(Array.from(activeImportedIds));
         this.saveWorkOrders(normalizedOrders, true);
       }
-      if (Array.isArray(parsed.users) && parsed.users.length > 0) {
-        this.saveUsers(parsed.users);
+      if (Array.isArray(mergedDb.users) && mergedDb.users.length > 0) {
+        this.saveUsers(mergedDb.users);
       }
-      if (Array.isArray(parsed.offices) && parsed.offices.length > 0) this.saveOffices(parsed.offices);
-      if (Array.isArray(parsed.columns) && parsed.columns.length > 0) this.saveColumns(parsed.columns);
-      if (parsed.dropdownOptions && Object.keys(parsed.dropdownOptions).length > 0) {
-        this.saveDropdownOptions(parsed.dropdownOptions);
+      if (Array.isArray(mergedDb.offices) && mergedDb.offices.length > 0) this.saveOffices(mergedDb.offices);
+      if (Array.isArray(mergedDb.columns) && mergedDb.columns.length > 0) this.saveColumns(mergedDb.columns);
+      if (mergedDb.dropdownOptions && Object.keys(mergedDb.dropdownOptions).length > 0) {
+        this.saveDropdownOptions(mergedDb.dropdownOptions);
       }
       if (tablesList && tablesList.length > 0) this.saveMonthTables(tablesList);
-      if (Array.isArray(parsed.archivedReports) && parsed.archivedReports.length > 0) {
-        this.saveArchivedReports(parsed.archivedReports);
+      if (Array.isArray(mergedDb.archivedReports) && mergedDb.archivedReports.length > 0) {
+        this.saveArchivedReports(mergedDb.archivedReports);
       }
 
       return { 
         success: true, 
         count: normalizedOrders.length,
-        usersCount: Array.isArray(parsed.users) ? parsed.users.length : 0,
+        usersCount: Array.isArray(mergedDb.users) ? mergedDb.users.length : 0,
         tablesCount: tablesList ? tablesList.length : 0,
         data: {
-          ...parsed,
+          ...mergedDb,
           workOrders: normalizedOrders,
-          monthTables: tablesList || parsed.monthTables || []
+          monthTables: tablesList || mergedDb.monthTables || []
         }
       };
     } catch (err: any) {
@@ -1917,7 +2061,7 @@ class VaultService {
     for (const [id, entry] of Object.entries(wal)) {
       if (!entry || !entry.orderId || tombstones.has(id)) continue;
       const ageMs = nowMs - new Date(entry.lastMutatedAt || 0).getTime();
-      if (ageMs > 20000) {
+      if (ageMs > 45000) {
         if (!entry.acked) {
           entry.acked = true;
           for (const f of Object.values(entry.fields || {})) {
@@ -1960,11 +2104,18 @@ class VaultService {
       });
     };
 
-    // 1. Authoritative server orders merged ONLY with genuinely active in-flight (<20s) local edits
+    // 1. Authoritative Server-First Merge:
+    // Server records are 100% authoritative for all acknowledged data.
+    // Local browser cache ONLY overrides specific fields if this tab has an active unacknowledged WAL mutation (<45s) or pending offline queue item.
     for (const sOrder of cleanServerOrders) {
       const lOrder = localMap.get(sOrder.id);
-      if (!lOrder) {
+      const isPendingOrUnacked = pendingOrderIds.has(sOrder.id) || unackedWalIds.has(sOrder.id);
+
+      if (!lOrder || !isPendingOrUnacked) {
         const walProtected = this.applyWalProtectionToOrder(sOrder);
+        if (lOrder) {
+          walProtected.order.photos = restoreStrippedPhotos(walProtected.order.photos, lOrder.photos);
+        }
         mergedMap.set(sOrder.id, walProtected.order);
         if (walProtected.hasUnackedWalChanges) {
           ordersToHydrate.push(walProtected.order);
@@ -1973,46 +2124,29 @@ class VaultService {
         continue;
       }
 
-      const isPendingOrUnacked = pendingOrderIds.has(sOrder.id) || unackedWalIds.has(sOrder.id);
-      const candidate: WorkOrder = {
-        ...sOrder,
-        photos: restoreStrippedPhotos(
-          Array.isArray(sOrder.photos) ? sOrder.photos : (lOrder.photos || []),
-          lOrder.photos
-        )
-      };
-
-      if (isPendingOrUnacked) {
-        const walProtected = this.applyWalProtectionToOrder(candidate);
-        mergedMap.set(sOrder.id, walProtected.order);
-        if (walProtected.hasUnackedWalChanges || pendingOrderIds.has(sOrder.id)) {
-          ordersToHydrate.push(walProtected.order);
-          needsServerHydration = true;
-        }
-      } else {
-        mergedMap.set(sOrder.id, candidate);
+      // Only reached when sOrder.id is actively in pendingOrderIds or unackedWalIds (<45s)
+      const walProtected = this.applyWalProtectionToOrder(sOrder);
+      walProtected.order.photos = restoreStrippedPhotos(walProtected.order.photos, lOrder.photos);
+      mergedMap.set(sOrder.id, walProtected.order);
+      if (walProtected.hasUnackedWalChanges || pendingOrderIds.has(sOrder.id)) {
+        ordersToHydrate.push(walProtected.order);
+        needsServerHydration = true;
       }
     }
 
-    // 2. Only keep local orders missing from server if they are genuinely unsynced (in pendingOrderIds or unackedWalIds).
-    // Any previously synced order that is no longer on the server was deleted by a user and must be purged locally!
-    let tombstonesUpdated = false;
+    // 2. Preserve any non-deleted local order that is not yet in cleanServerOrders ONLY if it is actively pending/unacked (<45s)
+    // or if the server returned 0 orders and has never been cleared (disaster recovery fallback)
+    const serverDeletedSet = new Set<string>(Array.isArray(serverDeletedIds) ? serverDeletedIds : []);
     for (const [id, lOrder] of localMap.entries()) {
-      if (!mergedMap.has(id) && !tombstones.has(id)) {
-        if (pendingOrderIds.has(id) || unackedWalIds.has(id)) {
+      if (!mergedMap.has(id) && !tombstones.has(id) && !serverDeletedSet.has(id)) {
+        const isActivelyPending = pendingOrderIds.has(id) || unackedWalIds.has(id);
+        if (isActivelyPending) {
           const walProtected = this.applyWalProtectionToOrder(lOrder);
           mergedMap.set(id, walProtected.order);
           ordersToHydrate.push(walProtected.order);
           needsServerHydration = true;
-        } else {
-          tombstones.add(id);
-          this.removeWalEntry(id);
-          tombstonesUpdated = true;
         }
       }
-    }
-    if (tombstonesUpdated) {
-      this.saveTombstones(tombstones);
     }
 
     const mergedOrders = Array.from(mergedMap.values());

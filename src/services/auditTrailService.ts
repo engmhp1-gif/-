@@ -36,7 +36,45 @@ export interface AuditTrailRecord {
 
 const AUDIT_TRAIL_STORAGE_KEY = 'qcms_155_immutable_audit_trail_v1';
 const SESSION_ID_STORAGE_KEY = 'qcms_155_active_session_id';
-const MAX_AUDIT_RECORDS = 2500;
+const MAX_AUDIT_RECORDS = 800;
+
+function reclaimLocalStorageQuota(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    // 1. Remove legacy/obsolete sandbox & shadow keys that consume megabytes of localStorage
+    const obsoleteKeys = [
+      'preview_sandbox_p155_vault_snapshots_v3',
+      'p155_vault_snapshots_v1',
+      'preview_sandbox_p155_vault_snapshots_v1',
+      'preview_sandbox_p155_vault_work_orders_v2',
+      'p155_vault_work_orders_v1',
+      'preview_sandbox_p155_vault_work_orders_v1',
+      'p155_vault_orders_shadow_v1',
+      'p155_vault_emergency_snapshot_v1'
+    ];
+    for (const key of obsoleteKeys) {
+      try {
+        localStorage.removeItem(key);
+      } catch (_) {}
+    }
+
+    // 2. Trim multi-snapshot archive in localStorage (full snapshots remain safely in IndexedDB)
+    const snapKey = 'p155_vault_snapshots_v3';
+    const rawSnaps = localStorage.getItem(snapKey);
+    if (rawSnaps && rawSnaps.length > 150_000) {
+      try {
+        const parsed = JSON.parse(rawSnaps);
+        if (Array.isArray(parsed) && parsed.length > 1) {
+          localStorage.setItem(snapKey, JSON.stringify(parsed.slice(0, 1)));
+        } else {
+          localStorage.removeItem(snapKey);
+        }
+      } catch {
+        localStorage.removeItem(snapKey);
+      }
+    }
+  } catch (_) {}
+}
 
 function getOrCreateSessionId(): string {
   try {
@@ -112,26 +150,50 @@ const FIELD_ARABIC_NAMES: Record<string, string> = {
 
 class AuditTrailService {
   private listeners: Set<(records: AuditTrailRecord[]) => void> = new Set();
+  private memoryRecords: AuditTrailRecord[] | null = null;
+  private isBatching = false;
 
   public getAllRecords(): AuditTrailRecord[] {
+    if (this.memoryRecords !== null) {
+      return this.memoryRecords;
+    }
     try {
       const raw = localStorage.getItem(AUDIT_TRAIL_STORAGE_KEY);
-      if (!raw) return [];
+      if (!raw) {
+        this.memoryRecords = [];
+        return [];
+      }
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
+      this.memoryRecords = Array.isArray(parsed) ? parsed.slice(0, MAX_AUDIT_RECORDS) : [];
+      return this.memoryRecords;
     } catch {
+      this.memoryRecords = [];
       return [];
     }
   }
 
   private saveRecords(records: AuditTrailRecord[]): void {
+    const trimmed = records.slice(0, MAX_AUDIT_RECORDS);
+    this.memoryRecords = trimmed;
+    if (this.isBatching) return;
+
     try {
-      const trimmed = records.slice(0, MAX_AUDIT_RECORDS);
       localStorage.setItem(AUDIT_TRAIL_STORAGE_KEY, JSON.stringify(trimmed));
-      this.notifyListeners(trimmed);
-    } catch (e) {
-      console.error('Failed to persist immutable audit trail:', e);
+    } catch {
+      // Automatically reclaim localStorage space from snapshots/legacy keys and retry with compact slice
+      reclaimLocalStorageQuota();
+      for (const fallbackLimit of [400, 180, 60]) {
+        try {
+          const compact = trimmed.slice(0, fallbackLimit);
+          this.memoryRecords = compact;
+          localStorage.setItem(AUDIT_TRAIL_STORAGE_KEY, JSON.stringify(compact));
+          break;
+        } catch {
+          // continue trying smaller slice
+        }
+      }
     }
+    this.notifyListeners(this.memoryRecords);
   }
 
   public subscribe(listener: (records: AuditTrailRecord[]) => void): () => void {
@@ -164,6 +226,8 @@ class AuditTrailService {
   }): AuditTrailRecord {
     const activeUser = params.user || getSavedCurrentUser();
     const now = new Date();
+    const prevStr = params.previousValue !== undefined && params.previousValue !== '' ? String(params.previousValue) : '—';
+    const nextStr = params.newValue !== undefined && params.newValue !== '' ? String(params.newValue) : '—';
     const entry: AuditTrailRecord = {
       id: `AUD-${now.getTime()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
       userName: activeUser?.displayName || activeUser?.username || 'مستخدم المنصة',
@@ -174,8 +238,8 @@ class AuditTrailService {
       operationType: params.operationType,
       operationLabel: params.operationLabel,
       fieldLabel: params.fieldLabel || params.operationLabel,
-      previousValue: params.previousValue !== undefined && params.previousValue !== '' ? String(params.previousValue) : '—',
-      newValue: params.newValue !== undefined && params.newValue !== '' ? String(params.newValue) : '—',
+      previousValue: prevStr.length > 350 ? `${prevStr.slice(0, 350)}...` : prevStr,
+      newValue: nextStr.length > 350 ? `${nextStr.slice(0, 350)}...` : nextStr,
       deviceSession: getDeviceAndSessionLabel(),
       workOrderNumber: params.workOrderNumber || 'عام',
       workOrderId: params.workOrderId || '',
@@ -197,10 +261,12 @@ class AuditTrailService {
     nextOrder: WorkOrder,
     user?: PlatformUser | null
   ): AuditTrailRecord[] {
+    this.isBatching = true;
     const createdEntries: AuditTrailRecord[] = [];
-    const won = nextOrder.workOrderNumber || prevOrder?.workOrderNumber || 'بدون رقم';
-    const wid = nextOrder.id;
-    const office = nextOrder.office || prevOrder?.office || '';
+    try {
+      const won = nextOrder.workOrderNumber || prevOrder?.workOrderNumber || 'بدون رقم';
+      const wid = nextOrder.id;
+      const office = nextOrder.office || prevOrder?.office || '';
 
     if (!prevOrder) {
       createdEntries.push(
@@ -425,7 +491,13 @@ class AuditTrailService {
       }
     });
 
-    return createdEntries;
+      return createdEntries;
+    } finally {
+      this.isBatching = false;
+      if (createdEntries.length > 0 && this.memoryRecords) {
+        this.saveRecords(this.memoryRecords);
+      }
+    }
   }
 }
 

@@ -62,6 +62,83 @@ export interface AttachedInspectionFile {
 export const SHAREPOINT_AUDIT_URL = "https://seccomsa-my.sharepoint.com/:f:/r/personal/1099399790_sec_se_com_sa/Documents/PDC_NBORDER_WO%20SHARE/%D9%85%D8%AA%D8%A7%D8%A8%D8%B9%D8%A9%20%D8%AC%D9%88%D8%AF%D8%A9%20%D8%A7%D9%84%D8%B5%D9%88%D8%B1%20%D9%82%D8%A8%D9%84%20%D8%A7%D9%84%D8%A7%D8%B1%D9%81%D8%A7%D9%82%20%D9%81%D9%8A%20%D8%A7%D9%84%D9%86%D8%B8%D8%A7%D9%85?d=w4d6cce1e1c444ad7bc569229dcc85069&csf=1&web=1&e=sq4nBV";
 export const FILE_DELETE_SECRET_PIN = "321";
 
+/**
+ * Builds a direct SharePoint / OneDrive for Business deep-search URL that automatically searches
+ * across all files and subfolders inside the shared folder for the specified workOrderNumber
+ * and navigates directly to the matching work order folder/files.
+ */
+export function buildSharePointDirectWorkOrderSearchUrl(
+  workOrderNumber?: string,
+  customShareUrl?: string
+): string {
+  const baseUrl = (customShareUrl || SHAREPOINT_AUDIT_URL).trim();
+  const cleanQuery = String(workOrderNumber || '').trim();
+  if (!cleanQuery) {
+    return baseUrl;
+  }
+
+  try {
+    const parsed = new URL(baseUrl);
+
+    // 1. Handle SharePoint / OneDrive sharing links like /:f:/r/personal/... or /:f:/r/sites/...
+    const sharingPrefixMatch = parsed.pathname.match(/^\/:[a-z]:\/[a-z](\/.*)$/i);
+    const rawServerRelativePath = sharingPrefixMatch ? sharingPrefixMatch[1] : parsed.pathname;
+
+    // 2. If it's a personal OneDrive for Business folder (/personal/<user>/...)
+    const personalSiteMatch = rawServerRelativePath.match(/^(\/personal\/[^/]+)(\/.*)?$/i);
+    if (personalSiteMatch) {
+      const personalSiteRoot = personalSiteMatch[1];
+      let decodedFolderPath = rawServerRelativePath;
+      try {
+        decodedFolderPath = decodeURIComponent(rawServerRelativePath);
+      } catch {
+        // Keep raw path if already decoded
+      }
+      const existingId = parsed.searchParams.get('id');
+      const targetFolderId = existingId || decodedFolderPath;
+
+      const searchUrl = new URL(`${parsed.origin}${personalSiteRoot}/_layouts/15/onedrive.aspx`);
+      searchUrl.searchParams.set('id', targetFolderId);
+      searchUrl.searchParams.set('qt', 'search');
+      searchUrl.searchParams.set('q', cleanQuery);
+      searchUrl.searchParams.set('searchScope', 'folder');
+      return searchUrl.toString();
+    }
+
+    // 3. If it's a SharePoint Team Site (/sites/<site>/...)
+    const teamSiteMatch = rawServerRelativePath.match(/^(\/sites\/[^/]+)(\/.*)?$/i);
+    if (teamSiteMatch) {
+      let decodedFolderPath = rawServerRelativePath;
+      try {
+        decodedFolderPath = decodeURIComponent(rawServerRelativePath);
+      } catch {
+        // Keep raw path
+      }
+      if (parsed.pathname.toLowerCase().endsWith('/allitems.aspx')) {
+        parsed.searchParams.set('view', '7');
+        parsed.searchParams.set('q', cleanQuery);
+        return parsed.toString();
+      }
+      const existingId = parsed.searchParams.get('id');
+      const targetFolderId = existingId || decodedFolderPath;
+      const searchUrl = new URL(`${parsed.origin}${teamSiteMatch[1]}/_layouts/15/onedrive.aspx`);
+      searchUrl.searchParams.set('id', targetFolderId);
+      searchUrl.searchParams.set('qt', 'search');
+      searchUrl.searchParams.set('q', cleanQuery);
+      searchUrl.searchParams.set('searchScope', 'folder');
+      return searchUrl.toString();
+    }
+
+    // 4. Fallback for generic SharePoint/OneDrive URLs: attach search parameters directly
+    parsed.searchParams.set('qt', 'search');
+    parsed.searchParams.set('q', cleanQuery);
+    return parsed.toString();
+  } catch {
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${separator}qt=search&q=${encodeURIComponent(cleanQuery)}`;
+  }
+}
+
 export interface ColumnDefinition {
   id: string;          // identifier, e.g. 'office', 'contractor', 'workOrderNumber', or 'col_...'
   title: string;       // display title, e.g. '1. المكتب'
@@ -230,7 +307,7 @@ export type AuditChecklistCategoryKey =
   | 'terminations';
 
 export interface WorkOrderAuditColumnData {
-  mainStatus?: 'مؤهل' | 'غير مؤهل' | 'غير محدد';
+  mainStatus?: 'مؤهل' | 'غير مؤهل' | 'قيد التدقيق' | 'غير محدد' | string;
   stationRoom?: AuditSectionCategoryData;
   hvSwitchgear?: AuditSectionCategoryData;
   transformerSubstation?: AuditSectionCategoryData;
@@ -249,6 +326,11 @@ export interface WorkOrderAuditColumnData {
   excavations?: AuditSectionCategoryData;
   joints?: AuditSectionCategoryData;
   terminations?: AuditSectionCategoryData;
+  // Primary Technical Support 9-item checklist data for PDC & Construction Audit columns
+  supportChecklist?: Record<string, 'مكتمل' | 'غير مكتمل' | 'لا ينطبق' | string>;
+  evaluatedKeys?: string[];
+  itemUpdatedAt?: Record<string, string>;
+  compliancePercentage?: number;
   // Legacy keys kept optional for backward compatibility
   meter?: AuditSectionCategoryData;
   excavation?: AuditSectionCategoryData;
@@ -488,35 +570,51 @@ export interface LiveNotificationItem {
 }
 
 export interface UserPermissions {
-  // 1. أدوات أوامر العمل والجدول والتدقيق المستقل
+  // 1. صلاحيات تبويبات العمود الجانبي والصفحات الرئيسية
+  tabHome?: boolean;
+  tabWorkOrders?: boolean;
+  tabKpis?: boolean;
+  tabQualityGuide?: boolean;
+  tabAuditHub?: boolean;
+  tabOffices?: boolean;
+  tabContractors?: boolean;
+  tabArchive?: boolean;
+  tabReports?: boolean;
+  tabDocuments?: boolean;
+  tabSettings?: boolean;
+
+  // 2. أدوات أوامر العمل والجدول والمرفقات
   addWorkOrder: boolean;
   editWorkOrderStatus: boolean;
   editWorkOrderBasic: boolean;
   inlineTableEdit: boolean;
   deleteWorkOrder: boolean;
-  importExcel: boolean;
-  importCompatibleTables?: boolean;
-  exportTable: boolean;
-  smartAudit: boolean;
+  uploadInspectionFiles?: boolean;
+  viewPhotos?: boolean;
   searchAndFilter: boolean;
-  undoRedo: boolean;
+  undoRedo?: boolean;
+
+  // 3. التدقيق الثلاثي المستقل واعتماد وأرشفة إجراء 155
   auditPdcColumn?: boolean;
   auditConstructionColumn?: boolean;
   auditTechnicalSupportColumn?: boolean;
   editProcedure155?: boolean;
-  uploadInspectionFiles?: boolean;
-  viewPhotos?: boolean;
+  smartAudit: boolean;
+  manageArchive155?: boolean;
 
-  // 2. الاطلاع على التقارير ولوحات القياس
+  // 4. الاطلاع على التقارير ولوحات القياس التفاعلية والتصدير
   viewKpiDashboard: boolean;
-  viewContractorClosureReport: boolean;
+  viewComprehensiveReports?: boolean;
   viewWeeklyReport: boolean;
   viewOfficeComparison: boolean;
-  viewArchive: boolean;
+  viewContractorClosureReport: boolean;
   viewNotesReport?: boolean;
-  viewComprehensiveReports?: boolean;
+  viewArchive: boolean;
+  exportTable: boolean;
 
-  // 3. إدارة الجداول والهيكل والمكاتب
+  // 5. الاستيراد وإدارة الجداول والهيكل والمكاتب
+  importExcel: boolean;
+  importCompatibleTables?: boolean;
   manageMonthTables: boolean;
   deleteMonthTable: boolean;
   manageOffices: boolean;
@@ -524,14 +622,14 @@ export interface UserPermissions {
   manageColumns: boolean;
   manageDropdowns: boolean;
 
-  // 4. الصيانة المتقدمة وإدارة الصلاحيات والنسخ السحابي
+  // 6. الخزنة السحابية والإشعارات وإدارة النظام
   clearData: boolean;
   restoreDeleted: boolean;
   manageCloudBackups?: boolean;
   manageNotifications: boolean;
   managePermissions: boolean;
 
-  // 5. الصلاحيات المخصصة للأعمدة (قائمة معرفات الحقول المسموح بتعديلها)
+  // 7. الصلاحيات المخصصة للأعمدة (قائمة معرفات الحقول المسموح بتعديلها)
   allowedColumns?: string[];
 }
 
@@ -581,7 +679,8 @@ export interface RealtimeEvent {
     | 'USER_PRESENCE'
     | 'HEARTBEAT'
     | 'PING'
-    | 'PONG';
+    | 'PONG'
+    | 'PLATFORM_PUBLISHED';
   payload: any;
   senderId: string;
   senderName?: string;

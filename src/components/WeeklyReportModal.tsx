@@ -34,6 +34,8 @@ import {
 } from '../services/exportService';
 import { soundService } from '../services/soundService';
 import { UnifiedSectionExportBar } from './UnifiedSectionExportBar';
+import { getEvaluatedSupportChecklistKeys } from './TechnicalSupportAuditModal';
+import { isOrderQualified100InAllThreeAudits, getEffectiveProcedure155Status } from '../utils/auditTracker';
 
 interface WeeklyReportModalProps {
   isOpen: boolean;
@@ -62,7 +64,7 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({
   const [selectedPeriod, setSelectedPeriod] = useState<'current_week' | 'last_week' | 'all'>('current_week');
   const [targetOfficeFilter, setTargetOfficeFilter] = useState<string>(selectedOffice || 'all');
   const [customNotes, setCustomNotes] = useState<string>(
-    'يوصى بضرورة استكمال رفع الصور الميدانية للمواقع المتبقية واعتماد تعديلات المقايسات قبل رفع أوامر العمل لإجراء 155 النهائي.'
+    'يوصى بضرورة استكمال رفع الصور الميدانية للمواقع المتبقية ومعالجة ملاحظات الجودة المرصودة قبل رفع أوامر العمل لإجراء 155 النهائي.'
   );
 
   // Adaptive display configuration
@@ -127,34 +129,51 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({
   const totalAudited = scopedOrders.length;
   
   const ready155Orders = useMemo(() => {
-    return scopedOrders.filter(w => 
-      String(w.procedure155Status).includes('مؤهل') || String(w.procedure155Status).includes('تم')
-    );
+    return scopedOrders.filter(w => {
+      const evalKeys = getEvaluatedSupportChecklistKeys(w);
+      const s = String(w.procedure155Status || '').trim();
+      const eff155 = getEffectiveProcedure155Status(w);
+      return (
+        isOrderQualified100InAllThreeAudits(w) ||
+        (!eff155.includes('غير') && (eff155.includes('مؤهل') || eff155.includes('تم'))) ||
+        (evalKeys.length > 0 && !s.includes('غير') && (s.includes('مؤهل') || s.includes('معتمد')))
+      );
+    });
   }, [scopedOrders]);
 
   const pending155Orders = useMemo(() => {
-    return scopedOrders.filter(w => 
-      String(w.procedure155Status).includes('معلق') || 
-      String(w.procedure155Status).includes('نواقص') || 
-      String(w.procedure155Status).includes('ملاحظات')
-    );
+    return scopedOrders.filter(w => {
+      const evalKeys = getEvaluatedSupportChecklistKeys(w);
+      const s = String(w.procedure155Status || '').trim();
+      const eff155 = getEffectiveProcedure155Status(w);
+      const hasAnyEval = evalKeys.length > 0 || Boolean(s && s !== 'قيد التدقيق' && s !== 'قيد التدقيق الفني') || Boolean(eff155);
+      if (!hasAnyEval) return false;
+      const isReady =
+        isOrderQualified100InAllThreeAudits(w) ||
+        (!eff155.includes('غير') && (eff155.includes('مؤهل') || eff155.includes('تم'))) ||
+        (evalKeys.length > 0 && !s.includes('غير') && (s.includes('مؤهل') || s.includes('معتمد')));
+      return !isReady;
+    });
   }, [scopedOrders]);
 
   const inProgressOrders = useMemo(() => {
     return scopedOrders.filter(w => 
-      String(w.executionStatus).includes('تنفيذ') || 
-      String(w.executionStatus).includes('قيد')
+      String(w.procedure155Status || 'قيد التدقيق').includes('تدقيق')
     );
   }, [scopedOrders]);
 
   const withPhotosOrders = useMemo(() => {
-    return scopedOrders.filter(w => w.photos && w.photos.length > 0);
+    return scopedOrders.filter(
+      w =>
+        (w.photos && w.photos.length > 0) ||
+        (w.photosFile && w.photosFile.length > 0) ||
+        String(w.attachmentStatus || '').includes('جاهز')
+    );
   }, [scopedOrders]);
 
   const boqModOrders = useMemo(() => {
-    return scopedOrders.filter(w => 
-      String(w.boqModification).includes('نعم') || 
-      String(w.boqModification).includes('تعديل')
+    return scopedOrders.filter(w =>
+      Boolean(w.qualityNotes && String(w.qualityNotes).trim().length > 0 && String(w.qualityNotes).trim() !== '-')
     );
   }, [scopedOrders]);
 
@@ -170,23 +189,29 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({
       const total = officeOrders.length;
 
       const ready = officeOrders.filter(w => 
-        String(w.procedure155Status).includes('مؤهل') || String(w.procedure155Status).includes('تم')
+        !String(w.procedure155Status || '').includes('غير') &&
+        (String(w.procedure155Status || '').includes('مؤهل') || String(w.procedure155Status || '').includes('تم'))
       ).length;
 
       const pending = officeOrders.filter(w => 
-        String(w.procedure155Status).includes('معلق') || 
-        String(w.procedure155Status).includes('نواقص') || 
-        String(w.procedure155Status).includes('ملاحظات')
+        String(w.procedure155Status || '').includes('غير') ||
+        String(w.procedure155Status || '').includes('معلق') || 
+        String(w.procedure155Status || '').includes('نواقص') || 
+        String(w.procedure155Status || '').includes('ملاحظات')
       ).length;
 
       const inProgress = officeOrders.filter(w => 
-        String(w.executionStatus).includes('تنفيذ') || 
-        String(w.executionStatus).includes('قيد')
+        String(w.procedure155Status || 'قيد التدقيق').includes('تدقيق')
       ).length;
 
-      const withPhotos = officeOrders.filter(w => w.photos && w.photos.length > 0).length;
+      const withPhotos = officeOrders.filter(
+        w =>
+          (w.photos && w.photos.length > 0) ||
+          (w.photosFile && w.photosFile.length > 0) ||
+          String(w.attachmentStatus || '').includes('جاهز')
+      ).length;
       const boqCount = officeOrders.filter(w => 
-        String(w.boqModification).includes('نعم') || String(w.boqModification).includes('تعديل')
+        Boolean(w.qualityNotes && String(w.qualityNotes).trim().length > 0 && String(w.qualityNotes).trim() !== '-')
       ).length;
 
       const completionRate = total > 0 ? Math.round((ready / total) * 100) : 0;
@@ -419,33 +444,33 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({
   // Render Sub-Offices Comparison Table Component
   const renderSubOfficesTable = (isCompact = false) => {
     return (
-      <div className="w-full overflow-hidden border-2 border-slate-400 rounded-lg shadow-2xs">
+      <div className="w-full overflow-hidden border-2 border-[#002855]/30 rounded-lg shadow-2xs">
         <table className="w-full table-fixed text-right border-collapse">
           <thead>
-            <tr className="bg-slate-900 text-white font-black">
-              <th className="p-2 text-center border-l border-slate-800 w-[6%] text-[11px] font-mono">
+            <tr className="bg-[#002855] text-white font-black border-b-2 border-[#F58220]">
+              <th className="p-2 text-center border-l border-[#1e3a8a] w-[6%] text-[11px] font-mono">
                 #
               </th>
-              <th className="p-2 border-l border-slate-800 w-[20%] text-[11px]">
+              <th className="p-2 border-l border-[#1e3a8a] w-[20%] text-[11px]">
                 المكتب الفرعي
               </th>
-              <th className="p-2 text-center border-l border-slate-800 w-[10%] text-[11px]">
+              <th className="p-2 text-center border-l border-[#1e3a8a] w-[10%] text-[11px]">
                 إجمالي الأوامر
               </th>
-              <th className="p-2 text-center border-l border-slate-800 w-[12%] text-[11px] text-emerald-300">
+              <th className="p-2 text-center border-l border-[#1e3a8a] w-[12%] text-[11px] text-emerald-300">
                 مؤهل للاغلاق (معتمد)
               </th>
-              <th className="p-2 text-center border-l border-slate-800 w-[12%] text-[11px] text-rose-300">
+              <th className="p-2 text-center border-l border-[#1e3a8a] w-[12%] text-[11px] text-rose-300">
                 غير مؤهل للأغلاق
               </th>
-              <th className="p-2 text-center border-l border-slate-800 w-[14%] text-[11px]">
+              <th className="p-2 text-center border-l border-[#1e3a8a] w-[14%] text-[11px]">
                 نسبة الإنجاز
               </th>
-              <th className="p-2 text-center border-l border-slate-800 w-[10%] text-[11px] text-indigo-200">
-                التوثيق بالصور
+              <th className="p-2 text-center border-l border-[#1e3a8a] w-[10%] text-[11px] text-indigo-200">
+                حالة الإرفاق والصور
               </th>
-              <th className="p-2 text-center border-l border-slate-800 w-[9%] text-[11px]">
-                تعديل المقايسة
+              <th className="p-2 text-center border-l border-[#1e3a8a] w-[9%] text-[11px]">
+                ملاحظات الجودة
               </th>
               <th className="p-2 text-center w-[11%] text-[11px]">
                 التقييم الإداري
@@ -608,10 +633,10 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({
           </div>
         </div>
 
-        {/* Secondary KPI Strip: BOQ Modifications & Field Readiness */}
+        {/* Secondary KPI Strip: Quality Notes & Field Readiness */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center text-xs">
           <div className="p-1.5 rounded-lg bg-purple-50 border border-purple-200 flex items-center justify-between px-3">
-            <span className="text-[10px] font-bold text-purple-900">تعديلات المقايسة (BOQ):</span>
+            <span className="text-[10px] font-bold text-purple-900">ملاحظات الجودة (qualityNotes):</span>
             <span className="font-mono font-black text-purple-950">{boqModOrders.length} أمر ({boqRate}%)</span>
           </div>
           <div className="p-1.5 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-between px-3">
@@ -673,7 +698,7 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({
             <strong>التوثيق الميداني:</strong> التأكيد على المقاولين باستكمال رفع صور الموقع لجميع الأوامر المتبقية والبالغة ({scopedOrders.length - withPhotosOrders.length}) أمراً لتفادي تعليق المستحقات.
           </li>
           <li>
-            <strong>تعديلات المقايسة (BOQ):</strong> تم رصد ({boqModOrders.length}) أمراً تتطلب تحديث جدول الكميات على النظام الإلكتروني، ويتعين اعتمادها بالتنسيق مع مهندس الإشراف المختص.
+            <strong>ملاحظات الجودة المرصودة:</strong> تم رصد ({boqModOrders.length}) أمراً تحتوي على ملاحظات جودة فنية مسجلة في عمود (ملاحظات الجودة)، ويتعين استيفاؤها بالتنسيق مع المقاول والاستشاري المختص.
           </li>
           <li>
             <strong>الجاهزية للإغلاق (معتمد):</strong> الأوامر المؤهلة للإغلاق وعددها ({ready155Orders.length}) تم استيفاء محاضر تدقيقها بالكامل ومعتمدة للإغلاق والاستلام النهائي.
@@ -708,30 +733,30 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({
   // Render Document Header Strictly Conforming to User Requirements
   const renderDocHeader = (pageNumber = 1, totalPages = 1) => {
     return (
-      <div className="border-b-2 border-slate-900 pb-2.5 mb-3">
+      <div className="bg-[#002855] text-white border-b-3 border-[#F58220] px-4 py-2.5 rounded-t-xl mb-3">
         <div className="flex items-center justify-between gap-4 py-1">
           {/* Right: Platform Header with Graded Typography */}
           <div className="text-right flex flex-col gap-0.5">
-            <span className="text-sm sm:text-base font-black text-slate-950 leading-tight">
+            <span className="text-sm sm:text-base font-black text-white leading-tight">
               حوكمة جودة اعمال الانشاءات
             </span>
-            <span className="text-xs sm:text-[13px] font-bold text-slate-800 leading-tight">
+            <span className="text-xs sm:text-[13px] font-bold text-[#FDB813] leading-tight">
               منظومة ادارة كهرباء الحدود الشمالية
             </span>
-            <span className="text-[11px] font-semibold text-slate-600 leading-tight">
+            <span className="text-[11px] font-semibold text-blue-200 leading-tight">
               المساندة الفنية
             </span>
           </div>
 
           {/* Center: Concise Table Name */}
           <div className="text-center">
-            <h3 className="text-xs sm:text-sm font-black text-slate-900">
+            <h3 className="text-xs sm:text-sm font-black text-[#FDB813]">
               التقرير الأسبوعي
             </h3>
           </div>
 
           {/* Left: Date Only */}
-          <div className="text-left text-xs font-mono font-bold text-slate-800">
+          <div className="text-left text-xs font-mono font-bold text-white">
             التاريخ: {new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())}
           </div>
         </div>
@@ -796,10 +821,10 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({
       `}</style>
 
       <div 
-        className="bg-white w-full max-w-7xl max-h-[94vh] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 text-right print:border-none print:shadow-none print:rounded-none"
+        className="bg-white w-full max-w-7xl max-h-[94vh] rounded-2xl shadow-2xl border-2 border-[#F58220]/70 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 text-right print:border-none print:shadow-none print:rounded-none"
       >
         {/* Top Header & Export Actions Toolbar */}
-        <div className="bg-slate-900 text-white px-4 py-3 sm:px-6 sm:py-3.5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-slate-800 shrink-0 print:hidden">
+        <div className="bg-gradient-to-l from-[#002855] via-[#003B73] to-[#004B8D] text-white px-4 py-3 sm:px-6 sm:py-3.5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b-2 border-[#F58220] shrink-0 print:hidden">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <FileDown className="w-5 h-5 text-emerald-400 shrink-0" />

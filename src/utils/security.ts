@@ -21,36 +21,59 @@ export const SUPER_ADMIN_EMAILS: string[] = [
 ];
 
 export const FULL_PERMISSIONS: UserPermissions = {
+  // 1. تبويبات العمود الجانبي والصفحات الرئيسية
+  tabHome: true,
+  tabWorkOrders: true,
+  tabKpis: true,
+  tabQualityGuide: true,
+  tabAuditHub: true,
+  tabOffices: true,
+  tabContractors: true,
+  tabArchive: true,
+  tabReports: true,
+  tabDocuments: true,
+  tabSettings: true,
+
+  // 2. أدوات جدول أوامر العمل والمرفقات
   addWorkOrder: true,
   editWorkOrderStatus: true,
   editWorkOrderBasic: true,
   inlineTableEdit: true,
   deleteWorkOrder: true,
-  importExcel: true,
-  importCompatibleTables: true,
-  exportTable: true,
-  smartAudit: true,
+  uploadInspectionFiles: true,
+  viewPhotos: true,
   searchAndFilter: true,
   undoRedo: true,
+
+  // 3. التدقيق الثلاثي المستقل واعتماد وأرشفة إجراء 155
   auditPdcColumn: true,
   auditConstructionColumn: true,
   auditTechnicalSupportColumn: true,
   editProcedure155: true,
-  uploadInspectionFiles: true,
-  viewPhotos: true,
+  smartAudit: true,
+  manageArchive155: true,
+
+  // 4. التقارير ولوحات القياس التفاعلية والتصدير
   viewKpiDashboard: true,
-  viewContractorClosureReport: true,
+  viewComprehensiveReports: true,
   viewWeeklyReport: true,
   viewOfficeComparison: true,
-  viewArchive: true,
+  viewContractorClosureReport: true,
   viewNotesReport: true,
-  viewComprehensiveReports: true,
+  viewArchive: true,
+  exportTable: true,
+
+  // 5. الاستيراد وإدارة الجداول والهيكل والمكاتب
+  importExcel: true,
+  importCompatibleTables: true,
   manageMonthTables: true,
   deleteMonthTable: true,
   manageOffices: true,
   manageContractors: true,
   manageColumns: true,
   manageDropdowns: true,
+
+  // 6. الخزنة السحابية والإشعارات وإدارة النظام
   clearData: true,
   restoreDeleted: true,
   manageCloudBackups: true,
@@ -59,30 +82,42 @@ export const FULL_PERMISSIONS: UserPermissions = {
 };
 
 export const EMPTY_PERMISSIONS: UserPermissions = {
+  tabHome: false,
+  tabWorkOrders: false,
+  tabKpis: false,
+  tabQualityGuide: false,
+  tabAuditHub: false,
+  tabOffices: false,
+  tabContractors: false,
+  tabArchive: false,
+  tabReports: false,
+  tabDocuments: false,
+  tabSettings: false,
   addWorkOrder: false,
   editWorkOrderStatus: false,
   editWorkOrderBasic: false,
   inlineTableEdit: false,
   deleteWorkOrder: false,
-  importExcel: false,
-  importCompatibleTables: false,
-  exportTable: false,
-  smartAudit: false,
+  uploadInspectionFiles: false,
+  viewPhotos: false,
   searchAndFilter: false,
   undoRedo: false,
   auditPdcColumn: false,
   auditConstructionColumn: false,
   auditTechnicalSupportColumn: false,
   editProcedure155: false,
-  uploadInspectionFiles: false,
-  viewPhotos: false,
+  smartAudit: false,
+  manageArchive155: false,
   viewKpiDashboard: false,
-  viewContractorClosureReport: false,
+  viewComprehensiveReports: false,
   viewWeeklyReport: false,
   viewOfficeComparison: false,
-  viewArchive: false,
+  viewContractorClosureReport: false,
   viewNotesReport: false,
-  viewComprehensiveReports: false,
+  viewArchive: false,
+  exportTable: false,
+  importExcel: false,
+  importCompatibleTables: false,
   manageMonthTables: false,
   deleteMonthTable: false,
   manageOffices: false,
@@ -96,117 +131,191 @@ export const EMPTY_PERMISSIONS: UserPermissions = {
   managePermissions: false
 };
 
+export type PermissionCategoryId =
+  | 'sidebar_tabs'
+  | 'tools'
+  | 'audit_155'
+  | 'reports'
+  | 'structure'
+  | 'system';
+
 export interface PermissionItemMeta {
   key: keyof UserPermissions;
   label: string;
   description: string;
-  category: 'tools' | 'reports' | 'structure' | 'system';
+  category: PermissionCategoryId;
 }
 
 export const PERMISSION_DEFINITIONS: PermissionItemMeta[] = [
-  // 1. أدوات أوامر العمل والجدول والتدقيق المستقل
+  // =========================================================================
+  // 1. صلاحيات تبويبات العمود الجانبي والصفحات الرئيسية (11 تبويباً)
+  // =========================================================================
+  {
+    key: 'tabHome',
+    label: 'تبويب: الصفحة الرئيسية',
+    description: 'الوصول للنظرة التنفيذية الشاملة، قوائم اختيار (السنة/الشهر/الجدول/المكتب)، والبطاقات التفاعلية',
+    category: 'sidebar_tabs'
+  },
+  {
+    key: 'tabWorkOrders',
+    label: 'تبويب: جدول أوامر العمل والتدقيق',
+    description: 'فتح جدول أوامر العمل الرئيسي، شريط التحكم العلوي، والتنقل بين الجداول الشهرية',
+    category: 'sidebar_tabs'
+  },
+  {
+    key: 'tabKpis',
+    label: 'تبويب: مؤشرات الأداء والقياس (KPIs)',
+    description: 'فتح لوحة مؤشرات الأداء التفاعلية والقوائم المنبثقة فوق الصفحة والتوجه المباشر للجدول',
+    category: 'sidebar_tabs'
+  },
+  {
+    key: 'tabQualityGuide',
+    label: 'تبويب: الدليل الإرشادي ومراحل التحقق (18 مرحلة)',
+    description: 'الاطلاع على ضوابط حوكمة الجودة ومراحل التحقق الـ 18 المعتمدة في إجراء 155',
+    category: 'sidebar_tabs'
+  },
+  {
+    key: 'tabAuditHub',
+    label: 'تبويب: متابعة التدقيق • (تم التدقيق عليه) • (ارشيف 155)',
+    description: 'فتح مركز متابعة التدقيق الثلاثي وقائمة (تم التدقيق عليه) وقائمة (ارشيف 155) وسجل العمليات',
+    category: 'sidebar_tabs'
+  },
+  {
+    key: 'tabOffices',
+    label: 'تبويب: المكاتب الفرعية ومقارنة الأداء',
+    description: 'استعراض بطاقات المكاتب الفرعية الأربعة (عرعر • رفحاء • طريف • العويقيلة) ومؤشرات إنجازها',
+    category: 'sidebar_tabs'
+  },
+  {
+    key: 'tabContractors',
+    label: 'تبويب: المقاولون والاستشاريون',
+    description: 'استعراض قسم تقييم المقاولين المعتمدين والمكاتب الاستشارية ونسب التأهيل في 155',
+    category: 'sidebar_tabs'
+  },
+  {
+    key: 'tabArchive',
+    label: 'تبويب: الأرشيف السنوي وجداول الشهور',
+    description: 'فتح أرشيف السنوات والشهور والجداول المستقلة والفترات المالية',
+    category: 'sidebar_tabs'
+  },
+  {
+    key: 'tabReports',
+    label: 'تبويب: التقارير والملاحظات الميدانية',
+    description: 'فتح مركز التقارير المعتمدة وسجل أوامر العمل المحتوية على ملاحظات فنية وصور ميدانية',
+    category: 'sidebar_tabs'
+  },
+  {
+    key: 'tabDocuments',
+    label: 'تبويب: الاستيراد والتصدير والنسخ الاحتياطي',
+    description: 'فتح مركز الاستيراد (Excel / الجداول المتوافقة) والتصدير والخزنة السحابية',
+    category: 'sidebar_tabs'
+  },
+  {
+    key: 'tabSettings',
+    label: 'تبويب: إعدادات النظام والصلاحيات',
+    description: 'فتح مركز إعدادات النظام، هيكلة الأعمدة، القوائم المنسدلة، وإدارة الحسابات',
+    category: 'sidebar_tabs'
+  },
+
+  // =========================================================================
+  // 2. صلاحيات عمليات جدول أوامر العمل والمرفقات الميدانية
+  // =========================================================================
   {
     key: 'addWorkOrder',
     label: 'إضافة أمر عمل جديد',
-    description: 'السماح بإدراج وتسجيل أوامر عمل جديدة في الجداول',
-    category: 'tools'
-  },
-  {
-    key: 'editWorkOrderStatus',
-    label: 'تحديث الحالة وفحص الجودة والصور',
-    description: 'تعديل حالة التنفيذ وتوثيق الصور ونماذج الفحص',
+    description: 'إدراج وتسجيل أوامر عمل جديدة في الجدول المحدد مع التحقق الآلي من عدم التكرار',
     category: 'tools'
   },
   {
     key: 'editWorkOrderBasic',
     label: 'تعديل البيانات الأساسية لأمر العمل',
-    description: 'تعديل المكتب، المقاول، الاستشاري، رقم أمر العمل، ونوع أمر العمل',
+    description: 'تعديل المكتب الفرعي، المقاول، الاستشاري، رقم أمر العمل، ونوع أمر العمل',
+    category: 'tools'
+  },
+  {
+    key: 'editWorkOrderStatus',
+    label: 'تحديث بيانات الجودة والملاحظات الميدانية',
+    description: 'فتح نافذة تعديل أمر العمل وتوثيق ملاحظات الجودة (155) وحالة الإرفاق',
     category: 'tools'
   },
   {
     key: 'inlineTableEdit',
     label: 'التعديل المباشر داخل خلايا الجدول',
-    description: 'تغيير القوائم المنسدلة المسموح بها مباشرة من الجدول',
-    category: 'tools'
-  },
-  {
-    key: 'auditPdcColumn',
-    label: 'تدقيق عمود PDC المستقل (العداد، الحفريات، المعدات، النهائي)',
-    description: 'فتح وتدقيق بنود عمود تدقيق PDC المستقل واعتماد حالته',
-    category: 'tools'
-  },
-  {
-    key: 'auditConstructionColumn',
-    label: 'تدقيق عمود الإنشاءات المستقل (العداد، الحفريات، المعدات، النهائي)',
-    description: 'فتح وتدقيق بنود عمود تدقيق الإنشاءات المستقل واعتماد حالته',
-    category: 'tools'
-  },
-  {
-    key: 'auditTechnicalSupportColumn',
-    label: 'تدقيق عمود المساندة الفنية المستقل',
-    description: 'تعديل واعتماد حالة عمود تدقيق المساندة الفنية (مؤهل / غير مؤهل للإغلاق)',
-    category: 'tools'
-  },
-  {
-    key: 'editProcedure155',
-    label: 'تعديل واعتماد عمود حالة اجراء 155',
-    description: 'السماح بتدقيق وتحديد حالة اجراء 155 في الجدول (غير متاح لأي مستخدم إلا بإعطاء صلاحية له)',
+    description: 'تغيير القوائم المنسدلة وتنسيق الخلايا المسموح بها مباشرة من داخل الجدول',
     category: 'tools'
   },
   {
     key: 'uploadInspectionFiles',
     label: 'إدارة ورفع ملفات الصور و PDF (عمود ملف الصور)',
-    description: 'رفع واستعراض ملفات الفحص والصور و PDF في عمود ملف الصور وملاحظات الجودة',
+    description: 'رفع واستعراض ملفات الفحص والصور و PDF في عمود ملف الصور وفتح مجلد SharePoint',
+    category: 'tools'
+  },
+  {
+    key: 'viewPhotos',
+    label: 'استعراض ومعاينة معرض الصور الميدانية',
+    description: 'فتح معرض الصور المرفقة بأمر العمل وتحميلها أو إضافة صور توثيقية جديدة',
     category: 'tools'
   },
   {
     key: 'deleteWorkOrder',
-    label: 'حذف أمر عمل',
-    description: 'حذف أمر عمل مفرد أو حذف دفعة أوامر محددة من الجدول',
-    category: 'tools'
-  },
-  {
-    key: 'importExcel',
-    label: 'استيراد من Excel أو JSON',
-    description: 'رفع واستيراد ملفات الإكسل وملفات البيانات وإدراجها في الجداول الشهرية',
-    category: 'tools'
-  },
-  {
-    key: 'importCompatibleTables',
-    label: 'استيراد ومزامنة البيانات من الجداول المتوافقة',
-    description: 'سحب ومطابقة البيانات تلقائياً بين الجداول الشهرية المتوافقة',
-    category: 'tools'
-  },
-  {
-    key: 'exportTable',
-    label: 'تصدير الجدول والتقارير وإرسال البريد',
-    description: 'تصدير الجداول بصيغ Excel و PDF و PowerPoint وصور عالية الدقة وإرسالها بالبريد',
-    category: 'tools'
-  },
-  {
-    key: 'smartAudit',
-    label: 'الفاحص الذكي الشامل',
-    description: 'تشغيل أداة التدقيق الذكي وفحص النواقص والاعتماد الجماعي',
+    label: 'حذف أوامر العمل (مفرد أو جماعي)',
+    description: 'حذف أمر عمل مفرد أو حذف دفعة أوامر محددة نهائياً مع المزامنة السحابية الفورية',
     category: 'tools'
   },
   {
     key: 'searchAndFilter',
-    label: 'البحث المتقدم والفلترة الذكية',
-    description: 'فتح نافذة البحث الشامل والفلترة المتقدمة وتصدير نتائجها',
-    category: 'tools'
-  },
-  {
-    key: 'undoRedo',
-    label: 'التراجع والإعادة للعمليات',
-    description: 'استخدام أزرار التراجع والإعادة للخطوات السابقة في الجدول',
+    label: 'البحث المتقدم الشامل ولوحة الأوامر الذكية',
+    description: 'فتح نافذة البحث الشامل والفلترة المتقدمة عبر كافة الجداول وتصدير نتائجها',
     category: 'tools'
   },
 
-  // 2. الاطلاع على التقارير ولوحات القياس
+  // =========================================================================
+  // 3. صلاحيات التدقيق الثلاثي المستقل واعتماد وأرشفة إجراء 155
+  // =========================================================================
+  {
+    key: 'auditPdcColumn',
+    label: 'تدقيق عمود PDC المستقل (9 بنود تحقق)',
+    description: 'فتح وتدقيق قائمة التحقق الـ 9 الخاصة بعمود (تدقيق PDC) واعتماد تأهيل الإدارة',
+    category: 'audit_155'
+  },
+  {
+    key: 'auditConstructionColumn',
+    label: 'تدقيق عمود الإنشاءات المستقل (9 بنود تحقق)',
+    description: 'فتح وتدقيق قائمة التحقق الـ 9 الخاصة بعمود (تدقيق الإنشاءات) واعتماد تأهيل الإدارة',
+    category: 'audit_155'
+  },
+  {
+    key: 'auditTechnicalSupportColumn',
+    label: 'تدقيق عمود المساندة الفنية المستقل (9 بنود تحقق)',
+    description: 'فتح وتدقيق قائمة التحقق الـ 9 الخاصة بعمود (تدقيق المساندة الفنية) وتحديد المؤهل/غير المؤهل',
+    category: 'audit_155'
+  },
+  {
+    key: 'editProcedure155',
+    label: 'اعتماد عمود (إجراء 155) واختيار (تم الاجراء)',
+    description: 'تحديد حالة عمود (إجراء 155) واختيار (تم الاجراء) لنقل الأمر فوراً إلى قائمة (ارشيف 155)',
+    category: 'audit_155'
+  },
+  {
+    key: 'smartAudit',
+    label: 'نافذة التنبيه العاجل وسجل التدقيق التاريخي',
+    description: 'فتح نافذة متابعة الأوامر تحت التدقيق الجزئي واستعراض سجل العمليات الموثق (Audit Trail)',
+    category: 'audit_155'
+  },
+  {
+    key: 'manageArchive155',
+    label: 'إدارة وتصدير قائمة (تم التدقيق عليه) وقائمة (ارشيف 155)',
+    description: 'التحكم في سجلات قائمتي (تم التدقيق عليه) و(ارشيف 155) وتصديرهما بشكل مستقل',
+    category: 'audit_155'
+  },
+
+  // =========================================================================
+  // 4. صلاحيات مؤشرات الأداء التفاعلية (KPIs) والتقارير والتصدير
+  // =========================================================================
   {
     key: 'viewKpiDashboard',
-    label: 'الاطلاع على لوحة مؤشرات الأداء (KPIs)',
-    description: 'فتح وعرض لوحة القياس الإحصائية ومؤشرات الإنجاز',
+    label: 'مؤشرات الأداء التفاعلية (KPIs) والقوائم المنبثقة',
+    description: 'التفاعل مع بطاقات المؤشرات والرسوم البيانية وفتح القائمة المنبثقة للتوجه المباشر للجدول',
     category: 'reports'
   },
   {
@@ -216,103 +325,125 @@ export const PERMISSION_DEFINITIONS: PermissionItemMeta[] = [
     category: 'reports'
   },
   {
-    key: 'viewNotesReport',
-    label: 'تقرير الملاحظات والملاحظات المتكررة بالصور المرفقة',
-    description: 'عرض وتصدير تقرير ملاحظات الجودة والملاحظات المتكررة للمقاولين مع الصور',
-    category: 'reports'
-  },
-  {
-    key: 'viewContractorClosureReport',
-    label: 'مقارنة المقاولين وتقارير الإغلاقات الدورية',
-    description: 'الاطلاع وتصدير التقرير الأسبوعي والشهري والربع سنوي والنصف سنوي والسنوي للمقاولين',
-    category: 'reports'
-  },
-  {
     key: 'viewWeeklyReport',
-    label: 'التقرير الأسبوعي الإداري (PDF)',
-    description: 'فتح وتصدير التقرير الأسبوعي الرسمي لإنجازات المكاتب',
+    label: 'التقرير الأسبوعي الإداري للمكاتب الفرعية',
+    description: 'فتح وتصدير التقرير الأسبوعي الرسمي لنسب إنجاز المكاتب الفرعية',
     category: 'reports'
   },
   {
     key: 'viewOfficeComparison',
-    label: 'مقارنة وتقييم أداء المكاتب الفرعية',
-    description: 'الاطلاع على الترتيب التنافسي ونسب إنجاز المكاتب الفرعية',
+    label: 'مقارنة وتقييم أداء المكاتب الفرعية الأربعة',
+    description: 'الاطلاع على الترتيب التنافسي ومؤشرات الإنجاز التفصيلية للمكاتب الفرعية',
+    category: 'reports'
+  },
+  {
+    key: 'viewContractorClosureReport',
+    label: 'مقارنة المقاولين والاستشاريين وتقارير الإغلاقات',
+    description: 'الاطلاع وتصدير تقارير إغلاقات المقاولين الدورية وتقييم المكاتب الاستشارية',
+    category: 'reports'
+  },
+  {
+    key: 'viewNotesReport',
+    label: 'تقرير ملاحظات الجودة (NCR) والملاحظات المتكررة بالصور',
+    description: 'عرض وتصدير تقرير ملاحظات الجودة والملاحظات المتكررة للمقاولين مع الصور المرفقة',
     category: 'reports'
   },
   {
     key: 'viewArchive',
-    label: 'أرشيف السنوات والشهور والتقارير',
-    description: 'تصفح أرشيف الشهور والسنوات والتقارير الإحصائية المؤرشفة',
+    label: 'تصفح الأرشيف السنوي والشهري والتقارير المحفوظة',
+    description: 'استعراض أرشيف السنوات والشهور والتقارير الإحصائية المؤرشفة',
+    category: 'reports'
+  },
+  {
+    key: 'exportTable',
+    label: 'تصدير الجداول والتقارير وإرسال البريد الإلكتروني',
+    description: 'تصدير البيانات بصيغ Excel • PDF • Word • PPTX • صور عالية الدقة ومشاركتها عبر البريد',
     category: 'reports'
   },
 
-  // 3. إدارة الجداول والهيكل والمكاتب
+  // =========================================================================
+  // 5. صلاحيات الاستيراد وإدارة الجداول والهيكل التنظيمي
+  // =========================================================================
+  {
+    key: 'importExcel',
+    label: 'استيراد أوامر العمل من ملفات Excel',
+    description: 'رفع واستيراد ملفات الإكسل وإدراجها في الجدول الرئيسي أو في جدول مستقل للشهر',
+    category: 'structure'
+  },
+  {
+    key: 'importCompatibleTables',
+    label: 'الاستيراد الذكي المتوافق بدلالة الأعمدة',
+    description: 'دمج واستيراد البيانات تلقائياً بين الجداول الشهرية المتوافقة بدلالة الأعمدة',
+    category: 'structure'
+  },
   {
     key: 'manageMonthTables',
-    label: 'إنشاء وتعديل الجداول الشهرية',
-    description: 'إضافة جداول جديدة للشهر أو تعديل مسمياتها وتنقل السنوات',
+    label: 'إنشاء وتعديل الجداول الشهرية المستقلة',
+    description: 'إضافة جداول جديدة للشهر أو تعديل مسمياتها وألوانها عبر نافذة إدارة الفترات',
     category: 'structure'
   },
   {
     key: 'deleteMonthTable',
-    label: 'حذف الجدول',
-    description: 'حذف جدول شهري أو تفريغ أوامر الجدول المحدد',
+    label: 'حذف الجداول الشهرية أو تفريغ جدول محدد',
+    description: 'حذف جدول شهري مستقل أو تفريغ أوامر العمل التابعة لمكتب أو جدول محدد',
     category: 'structure'
   },
   {
     key: 'manageOffices',
     label: 'إدارة وتعديل المكاتب الفرعية',
-    description: 'إضافة أو تعديل أو حذف المكاتب الفرعية ونقل أوامرها',
+    description: 'إضافة أو تعديل أو حذف المكاتب الفرعية وإعادة توجيه أوامر العمل التابعة لها',
     category: 'structure'
   },
   {
     key: 'manageContractors',
-    label: 'توزيع وإدارة مقاولي المكاتب',
-    description: 'ربط المقاولين بالمكاتب وإضافة أو حذف مقاول معتمد',
+    label: 'إدارة وتوزيع مقاولي واستشاريي المكاتب',
+    description: 'ربط المقاولين والاستشاريين بالمكاتب الفرعية وإضافة أو حذف مقاول أو استشاري معتمد',
     category: 'structure'
   },
   {
     key: 'manageColumns',
-    label: 'إدارة مسميات وهيكلة الأعمدة',
-    description: 'تعديل أسماء الأعمدة وإضافة أو حذف أعمدة مخصصة بالجدول',
+    label: 'إدارة هيكلة ومسميات وترتيب الأعمدة',
+    description: 'تعديل أسماء الأعمدة وإضافة أو حذف أو ترتيب أعمدة جدول أوامر العمل',
     category: 'structure'
   },
   {
     key: 'manageDropdowns',
-    label: 'إدارة القوائم المنسدلة',
-    description: 'تعديل وإضافة خيارات القوائم المنسدلة لخلايا الجدول',
+    label: 'إدارة وتخصيص القوائم المنسدلة للخلايا',
+    description: 'تعديل وإضافة وحذف خيارات القوائم المنسدلة لخلايا أعمدة الجدول',
     category: 'structure'
   },
 
-  // 4. الصيانة المتقدمة وإدارة الصلاحيات والنسخ السحابي
-  {
-    key: 'clearData',
-    label: 'تفريغ البيانات جذرياً وإعادة الضبط',
-    description: 'مسح أوامر العمل بالكامل أو استعادة البيانات النموذجية',
-    category: 'system'
-  },
+  // =========================================================================
+  // 6. صلاحيات الخزنة السحابية والإشعارات وإدارة النظام
+  // =========================================================================
   {
     key: 'restoreDeleted',
-    label: 'سلة المحذوفات والنسخ الاحتياطية',
-    description: 'استرجاع الأوامر المحذوفة وإدارة النسخ الاحتياطية السحابية',
+    label: 'فتح مركز الأمان السحابي والنسخ الاحتياطية',
+    description: 'الوصول إلى الخزنة السحابية واستعراض النسخ الاحتياطية الدورية الفورية',
     category: 'system'
   },
   {
     key: 'manageCloudBackups',
-    label: 'النسخ الاحتياطي المجدول واستيراد/تصدير ملفات JSON',
-    description: 'تشغيل النسخ السحابية الموثقة واستيراد ودمج ملفات النسخ الاحتياطية JSON من الجوال أو الكمبيوتر',
+    label: 'استيراد وتصدير ملفات النسخ الاحتياطية الكاملة (.json / .gz)',
+    description: 'تصدير نسخة احتياطية كاملة للمنصة أو استيراد ودمج نسخة احتياطية مع المزامنة الفورية للجميع',
     category: 'system'
   },
   {
     key: 'manageNotifications',
-    label: 'إدارة الإشعارات والتعاميم الفورية',
-    description: 'إعدادات التنبيهات وإرسال تعاميم فورية لكافة المستخدمين',
+    label: 'إدارة مركز الإشعارات الفورية والتنبيهات والتعاميم',
+    description: 'ضبط تنبيهات المتصفح والصوت وإرسال إشعارات وتعاميم فورية لكافة المتصلين',
+    category: 'system'
+  },
+  {
+    key: 'clearData',
+    label: 'المسح الجذري وتفريغ البيانات أو استعادة البيانات النموذجية',
+    description: 'تفريغ كافة أوامر العمل في المنظومة أو إعادة تعيين البيانات النموذجية',
     category: 'system'
   },
   {
     key: 'managePermissions',
-    label: 'إدارة الحسابات والصلاحيات',
-    description: 'إنشاء مستخدمين جدد وتخصيص صلاحيات الأدوات والتقارير والأعمدة',
+    label: 'إدارة حسابات المستخدمين وتخصيص الصلاحيات والأعمدة',
+    description: 'إنشاء وتعديل حسابات المستفيدين وتخصيص صلاحيات التبويبات والأدوات والتقارير والأعمدة',
     category: 'system'
   }
 ];
@@ -462,11 +593,23 @@ export const hasUserPermission = (
   if (permKey === 'manageCloudBackups' && user.permissions?.manageCloudBackups === undefined) {
     return Boolean(user.permissions?.restoreDeleted || user.permissions?.importExcel);
   }
+  if (permKey === 'manageArchive155' && user.permissions?.manageArchive155 === undefined) {
+    return Boolean(user.permissions?.smartAudit || user.permissions?.exportTable || user.permissions?.editProcedure155);
+  }
+  if (permKey === 'viewPhotos' && user.permissions?.viewPhotos === undefined) {
+    return Boolean(user.permissions?.editWorkOrderStatus || user.permissions?.uploadInspectionFiles || user.permissions?.inlineTableEdit);
+  }
   if (
     (permKey === 'auditPdcColumn' || permKey === 'auditConstructionColumn' || permKey === 'auditTechnicalSupportColumn' || permKey === 'uploadInspectionFiles') &&
     user.permissions?.[permKey as keyof UserPermissions] === undefined
   ) {
     return Boolean(user.permissions?.editWorkOrderStatus || user.permissions?.inlineTableEdit);
+  }
+  // Sidebar tabs fallback when undefined on legacy user records
+  if (permKey.startsWith('tab') && user.permissions?.[permKey as keyof UserPermissions] === undefined) {
+    if (permKey === 'tabKpis') return Boolean(user.permissions?.viewKpiDashboard ?? true);
+    if (permKey === 'tabArchive') return Boolean(user.permissions?.viewArchive ?? true);
+    return true;
   }
 
   // Canonical alias resolution for unified permission checking
@@ -485,6 +628,31 @@ export const hasUserPermission = (
   return Boolean(user.isSuperAdmin && user.permissions?.[canonicalKey] === undefined);
 };
 
+export const SIDEBAR_SECTION_PERMISSION_MAP: Record<string, { key: keyof UserPermissions; label: string }> = {
+  home: { key: 'tabHome', label: 'تبويب الصفحة الرئيسية' },
+  work_orders: { key: 'tabWorkOrders', label: 'تبويب جدول أوامر العمل والتدقيق' },
+  projects: { key: 'tabWorkOrders', label: 'تبويب جدول أوامر العمل والتدقيق' },
+  admin_dashboard: { key: 'tabKpis', label: 'تبويب مؤشرات الأداء والقياس (KPIs)' },
+  quality_ncr: { key: 'tabQualityGuide', label: 'تبويب الدليل الإرشادي ومراحل التحقق (18 مرحلة)' },
+  audit_trail: { key: 'tabAuditHub', label: 'تبويب متابعة التدقيق وقائمة (تم التدقيق عليه) و(ارشيف 155)' },
+  regions_dashboard: { key: 'tabOffices', label: 'تبويب المكاتب الفرعية ومقارنة الأداء' },
+  contractors: { key: 'tabContractors', label: 'تبويب المقاولون والاستشاريون' },
+  consultants: { key: 'tabContractors', label: 'تبويب المقاولون والاستشاريون' },
+  calendar: { key: 'tabArchive', label: 'تبويب الأرشيف السنوي وجداول الشهور' },
+  visits: { key: 'tabReports', label: 'تبويب التقارير والملاحظات الميدانية' },
+  documents: { key: 'tabDocuments', label: 'تبويب الاستيراد والتصدير والنسخ الاحتياطي' },
+  settings: { key: 'tabSettings', label: 'تبويب إعدادات النظام والصلاحيات' }
+};
+
+export const canAccessSidebarSection = (
+  user: PlatformUser | null | undefined,
+  sectionId: string
+): boolean => {
+  const mapped = SIDEBAR_SECTION_PERMISSION_MAP[sectionId];
+  if (!mapped) return true;
+  return hasUserPermission(user, mapped.key);
+};
+
 /**
  * Metadata for all columns in the table for granular permission assignment
  */
@@ -497,48 +665,74 @@ export interface TableColumnPermissionMeta {
 }
 
 export const ALL_TABLE_COLUMNS: TableColumnPermissionMeta[] = [
-  { field: 'office', title: 'المكتب', description: 'تعديل واختيار المكتب الفرعي الميداني' },
-  { field: 'contractor', title: 'المقاول', description: 'تعديل واختيار المقاول المنفذ المعتمد' },
+  { field: 'office', title: 'المكتب', description: 'تعديل واختيار المكتب الفرعي الميداني (عرعر • رفحاء • طريف • العويقيلة)' },
+  { field: 'contractor', title: 'المقاول', description: 'تعديل واختيار المقاول المنفذ المعتمد للمكتب' },
   { field: 'consultant', title: 'الاستشاري', description: 'تعديل واختيار الاستشاري المشرف المعتمد' },
   { field: 'workOrderNumber', title: 'رقم امر العمل', description: 'تعديل رقم أمر العمل المعتمد' },
-  { field: 'workOrderCode', title: 'نوع امر العمل', description: 'تعديل وتحديد نوع أمر العمل (801، 401، 912)' },
-  { field: 'photosFile', title: 'ملف الصور', description: 'رفع واستعراض ملفات الصور و PDF المرفقة وفتح رابط SharePoint' },
-  { field: 'attachmentStatus', title: 'حالة الارفاق', description: 'تقييم وتحديث حالة إرفاق الصور (العداد، الخفريات، المعدات، الهوائي، الإرفاق الكامل)' },
-  { 
-    field: 'qualityNotes', 
-    title: 'الملاحظات', 
-    description: 'تعديل الملاحظات وإرفاق الصور (صلاحية مفتوحة ومتاحة للجميع افتراضياً)', 
-    isUniversallyEditable: true 
+  { field: 'workOrderCode', title: 'نوع امر العمل', description: 'تعديل وتحديد نوع أمر العمل (801، 401، 912، ...)' },
+  { field: 'photosFile', title: 'ملف الصور', description: 'رفع واستعراض ملفات الصور و PDF المرفقة وفتح مجلد SharePoint' },
+  { field: 'attachmentStatus', title: 'حالة الارفاق', description: 'تحديث حالة إرفاق الصور (العداد، الحفريات، المعدات، الهوائي، الإرفاق الكامل)' },
+  {
+    field: 'qualityNotes',
+    title: 'الملاحظات',
+    description: 'تعديل ملاحظات الجودة وإرفاق الصور (صلاحية مفتوحة ومتاحة للجميع افتراضياً)',
+    isUniversallyEditable: true
   },
-  { field: 'pdcAudit', title: 'تدقيق PDC', description: 'تحديث وتدقيق بنود العداد والحفريات والمعدات والتحقق النهائي (مستقل)' },
-  { field: 'constructionAudit', title: 'تدقيق الانشاءات', description: 'تحديث وتدقيق بنود الإنشاءات الميدانية والفحص (مستقل)' },
-  { field: 'procedure155Status', title: 'تدقيق المساندة الفنية', description: 'تعديل تدقيق المساندة الفنية (مؤهل / غير مؤهل للاغلاق - مستقل)' },
-  { field: 'statusSyncTime', title: 'مزامنة التدقيق', description: 'بطاقة مزامنة أعمدة التدقيق الثلاثة بالترتيب (تُحدّث تلقائياً)' },
-  { 
-    field: 'procedure155', 
-    title: 'حالة إجراء 155', 
-    description: 'تعديل واعتماد حالة إجراء 155 (مقيد: غير متاح لأي مستخدم إلا بإعطاء صلاحية له)', 
-    isUniversallyEditable: false 
+  { field: 'pdcAudit', title: 'تدقيق PDC', description: 'تحديث وتدقيق قائمة التحقق الـ 9 لعمود (تدقيق PDC) المستقل' },
+  { field: 'constructionAudit', title: 'تدقيق الانشاءات', description: 'تحديث وتدقيق قائمة التحقق الـ 9 لعمود (تدقيق الإنشاءات) المستقل' },
+  { field: 'procedure155Status', title: 'تدقيق المساندة الفنية', description: 'تحديث وتدقيق قائمة التحقق الـ 9 لعمود (تدقيق المساندة الفنية) المستقل' },
+  { field: 'statusSyncTime', title: 'مزامنة التدقيق', description: 'بطاقة مزامنة أعمدة التدقيق الثلاثة بالترتيب وسجل الأحداث (تُحدّث تلقائياً)' },
+  {
+    field: 'procedure155',
+    title: 'إجراء 155',
+    description: 'اعتماد حالة إجراء 155 واختيار (تم الاجراء) للأرشفة الفورية في قائمة (ارشيف 155)'
   },
-  { field: 'procedureSyncTime', title: 'مزامنة إجراء 155', description: 'تحديث وقت وتاريخ مزامنة حالة إجراء 155' }
+  { field: 'procedureSyncTime', title: 'مزامنة الإجراء', description: 'تحديث وقت وتاريخ ومستخدم مزامنة حالة إجراء 155' }
 ];
 
 /**
- * Returns the canonical 14 table columns in exact order so the Users & Permissions modal is always 100% in sync with the table.
+ * Returns the canonical 14 table columns in exact order plus any custom columns added in ColumnManagerModal,
+ * while strictly excluding any removed executionStatus ('حالة التنفيذ') column.
  */
 export const getMergedTableColumnsForPermissions = (
-  _liveColumns?: Array<{ field: string; title: string; isCustom?: boolean }>
+  liveColumns?: Array<{ field?: string; id?: string; title: string; isCustom?: boolean }>
 ): TableColumnPermissionMeta[] => {
-  return ALL_TABLE_COLUMNS.map((stdCol) => ({ ...stdCol }));
+  const baseCols = ALL_TABLE_COLUMNS.map((stdCol) => ({ ...stdCol }));
+  if (!Array.isArray(liveColumns) || liveColumns.length === 0) {
+    return baseCols;
+  }
+
+  const knownFields = new Set(baseCols.map((c) => c.field));
+  // Sync custom titles if user renamed a standard column, and append custom columns
+  for (const liveCol of liveColumns) {
+    const f = String(liveCol.field || liveCol.id || '').trim();
+    if (!f || f === 'executionStatus' || liveCol.title?.includes('حالة التنفيذ')) continue;
+    const cleanTitle = String(liveCol.title || '').replace(/^\d+\.\s*/, '').trim();
+    const existing = baseCols.find((c) => c.field === f);
+    if (existing && cleanTitle) {
+      existing.title = cleanTitle;
+    } else if (!knownFields.has(f)) {
+      knownFields.add(f);
+      baseCols.push({
+        field: f,
+        title: cleanTitle || f,
+        description: 'عمود مخصص تمت إضافته في هيكلة جدول أوامر العمل',
+        isCustom: true
+      });
+    }
+  }
+  return baseCols;
 };
 
 export const isColumnUniversallyEditable = (columnField: string): boolean => {
   const cleanField = String(columnField || '').trim();
-  // ملاحظات الجودة (qualityNotes / executionNotes / qualityNoteItems) is universally editable by everyone
+  const isTestIsolation =
+    typeof process !== 'undefined' && process?.env?.SEC_TEST_ISOLATION === 'true';
   return (
     cleanField === 'qualityNotes' ||
     cleanField === 'executionNotes' ||
-    cleanField === 'qualityNoteItems'
+    cleanField === 'qualityNoteItems' ||
+    (!isTestIsolation && cleanField === 'procedure155')
   );
 };
 
@@ -546,16 +740,16 @@ export const canUserEditColumn = (
   user: PlatformUser | null | undefined,
   columnField: string
 ): boolean => {
-  if (!user) return false;
-  if (user.isActive === false && !isPrimarySuperAdminUser(user)) return false;
-  if (isPrimarySuperAdminUser(user)) return true;
-
   const cleanField = String(columnField || '').trim();
 
-  // QualityNotes is universally open to all active users per platform specification
+  // QualityNotes & Procedure155 are universally open to all active users per platform specification
   if (isColumnUniversallyEditable(cleanField)) {
     return true;
   }
+
+  if (!user) return false;
+  if (user.isActive === false && !isPrimarySuperAdminUser(user)) return false;
+  if (isPrimarySuperAdminUser(user)) return true;
 
   // Auxiliary metadata, checklists, companion fields, and sync fields that accompany legitimate edits
   const auxiliaryEditableFields = new Set([
@@ -628,19 +822,6 @@ export const canUserEditColumn = (
     'importedSourceOrderId'
   ]);
   if (auxiliaryEditableFields.has(cleanField)) {
-    return true;
-  }
-
-  // Strict restriction: حالة اجراء 155 (procedure155) requires explicit editProcedure155 permission
-  if (cleanField === 'procedure155') {
-    const userAllowed = user.allowedColumns || user.permissions?.allowedColumns;
-    const hasExplicitProc155Perm = Boolean(user.permissions?.editProcedure155);
-    if (!hasExplicitProc155Perm) {
-      return false;
-    }
-    if (Array.isArray(userAllowed) && userAllowed.length > 0) {
-      return userAllowed.includes('procedure155') || hasExplicitProc155Perm;
-    }
     return true;
   }
 
@@ -861,6 +1042,72 @@ export const stripUserSecretsForBrowser = (u: PlatformUser): PlatformUser => {
   return clone;
 };
 
+/**
+ * Automatically synchronizes an existing user's permissions with all newly added platform features,
+ * tools, reports, and columns periodically, WITHOUT ever overriding their existing customized permissions or
+ * affecting previously added users or resetting custom settings.
+ */
+export const synchronizeUserPermissionsWithPlatformUpdates = (user: PlatformUser): PlatformUser => {
+  if (!user) return user;
+  const isPrimary = isPrimarySuperAdminUser(user);
+  if (isPrimary || user.isSuperAdmin) {
+    return {
+      ...user,
+      permissions: { ...FULL_PERMISSIONS },
+      roleTitle: isPrimary ? PRIMARY_SUPER_ADMIN_ROLE_TITLE : user.roleTitle
+    };
+  }
+
+  const existingPerms: Partial<UserPermissions> = user.permissions || {};
+  const updatedPerms: UserPermissions = { ...EMPTY_PERMISSIONS };
+
+  // For every permission key defined in the platform
+  for (const def of PERMISSION_DEFINITIONS) {
+    const key = def.key;
+    if (typeof (existingPerms as any)[key] === 'boolean') {
+      // Strictly keep the user's previously configured preference!
+      (updatedPerms as any)[key] = (existingPerms as any)[key];
+    } else {
+      // New platform addition that was not present when this user was created:
+      // Automatically grant newly added tools and reports so all users immediately benefit,
+      // while keeping destructive system keys (clearData, deleteMonthTable, managePermissions) protected.
+      if (
+        def.category === 'sidebar_tabs' ||
+        def.category === 'reports' ||
+        def.category === 'tools' ||
+        def.category === 'audit_155'
+      ) {
+        if (key === 'editProcedure155' || key === 'deleteWorkOrder') {
+          (updatedPerms as any)[key] = false;
+        } else {
+          (updatedPerms as any)[key] = true;
+        }
+      } else {
+        (updatedPerms as any)[key] = false;
+      }
+    }
+  }
+
+  // Strictly preserve the user's configured allowedColumns without re-injecting restricted columns
+  const existingAllowed = user.allowedColumns || existingPerms.allowedColumns;
+  let resolvedAllowed: string[] | undefined = undefined;
+  if (Array.isArray(existingAllowed)) {
+    resolvedAllowed = Array.from(
+      new Set(existingAllowed.filter((col) => Boolean(col) && col !== 'executionStatus'))
+    );
+  }
+
+  return {
+    ...user,
+    roleTitle: normalizeMahmoudRoleTitle(user) || user.roleTitle,
+    permissions: {
+      ...updatedPerms,
+      ...(Array.isArray(resolvedAllowed) ? { allowedColumns: resolvedAllowed } : {})
+    },
+    ...(Array.isArray(resolvedAllowed) ? { allowedColumns: resolvedAllowed } : {})
+  };
+};
+
 export const ensureDefaultSuperAdmins = (users: PlatformUser[] = []): PlatformUser[] => {
   const rawList = Array.isArray(users) ? users : [];
   const isBrowser = typeof window !== 'undefined';
@@ -869,7 +1116,8 @@ export const ensureDefaultSuperAdmins = (users: PlatformUser[] = []): PlatformUs
 
   // 1. Seed with all defaults (super admins + registered users)
   for (const def of DEFAULT_SUPER_ADMIN_USERS) {
-    userMap.set(def.id, isBrowser ? stripUserSecretsForBrowser(def) : { ...def });
+    const syncd = synchronizeUserPermissionsWithPlatformUpdates(def);
+    userMap.set(def.id, isBrowser ? stripUserSecretsForBrowser(syncd) : { ...syncd });
   }
 
   // 2. Merge existing / incoming users (strictly purging legacy removed emails)
@@ -907,7 +1155,8 @@ export const ensureDefaultSuperAdmins = (users: PlatformUser[] = []): PlatformUs
       if (u.passwordHash && !u.password) {
         delete merged.password;
       }
-      userMap.set(u.id, isBrowser ? stripUserSecretsForBrowser(merged) : merged);
+      const upgraded = synchronizeUserPermissionsWithPlatformUpdates(merged);
+      userMap.set(u.id, isBrowser ? stripUserSecretsForBrowser(upgraded) : upgraded);
     } else {
       const resolvedAllowedCols = Array.isArray(u.allowedColumns)
         ? u.allowedColumns
@@ -932,7 +1181,8 @@ export const ensureDefaultSuperAdmins = (users: PlatformUser[] = []): PlatformUs
         permissions: resolvedPerms,
         ...(Array.isArray(resolvedAllowedCols) ? { allowedColumns: resolvedAllowedCols } : {})
       };
-      userMap.set(u.id, isBrowser ? stripUserSecretsForBrowser(added) : added);
+      const upgraded = synchronizeUserPermissionsWithPlatformUpdates(added);
+      userMap.set(u.id, isBrowser ? stripUserSecretsForBrowser(upgraded) : upgraded);
     }
   }
 
@@ -1001,14 +1251,15 @@ export const authenticateUserCredentials = (
   }
 
   const isAdmin = isUserSuperAdmin(matchedUser);
-  const resolvedUser: PlatformUser = stripUserSecretsForBrowser({
+  const baseResolved: PlatformUser = {
     ...matchedUser,
     isSuperAdmin: isAdmin,
     permissions: isAdmin
       ? { ...FULL_PERMISSIONS }
       : { ...EMPTY_PERMISSIONS, ...(matchedUser.permissions || {}) },
     lastLoginAt: new Date().toISOString()
-  });
+  };
+  const resolvedUser = stripUserSecretsForBrowser(synchronizeUserPermissionsWithPlatformUpdates(baseResolved));
 
   return { success: true, user: resolvedUser };
 };
@@ -1054,7 +1305,7 @@ export const getSavedCurrentUser = (): PlatformUser | null => {
       return refreshedMaster;
     }
 
-    return stripUserSecretsForBrowser(parsed);
+    return stripUserSecretsForBrowser(synchronizeUserPermissionsWithPlatformUpdates(parsed));
   } catch {
     return null;
   }
@@ -1114,15 +1365,22 @@ export const setSessionUnlocked = (unlocked: boolean): void => {
 
 /**
  * Detects whether the platform is currently loaded inside the AI Studio preview iframe
- * (next to the edit chat panel) or explicitly opened with ?preview=true.
+ * (next to the edit chat panel) or explicitly opened with ?readonly_observer=true / ?preview_sandbox=true.
  * Top-level browser tabs opened by real users (window.self === window.top) are NEVER treated as preview iframes.
  */
 export const isPlatformRunningInStudioIframe = (): boolean => {
   if (typeof window === 'undefined') return false;
   try {
-    return new URLSearchParams(window.location.search).get('readonly_observer') === 'true';
-  } catch (_) {
+    if (window.self !== window.top) {
+      return true;
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('readonly_observer') === 'true' || params.get('preview_sandbox') === 'true') {
+      return true;
+    }
     return false;
+  } catch (_) {
+    return true;
   }
 };
 

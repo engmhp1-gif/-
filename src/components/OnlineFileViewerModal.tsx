@@ -15,7 +15,7 @@ import {
   FolderOpen,
   Copy
 } from 'lucide-react';
-import { AttachedInspectionFile, SHAREPOINT_AUDIT_URL } from '../types';
+import { AttachedInspectionFile, SHAREPOINT_AUDIT_URL, buildSharePointDirectWorkOrderSearchUrl } from '../types';
 import { soundService } from '../services/soundService';
 
 interface OnlineFileViewerModalProps {
@@ -313,16 +313,25 @@ export const OnlineFileViewerModal: React.FC<OnlineFileViewerModalProps> = ({
             <span className="hidden md:inline">فتح في نافذة مستقلة</span>
           </button>
 
-          {/* SharePoint folder link */}
+          {/* SharePoint folder link with direct orderNumber search */}
           <a
-            href={SHAREPOINT_AUDIT_URL}
+            href={buildSharePointDirectWorkOrderSearchUrl(orderNumber, SHAREPOINT_AUDIT_URL)}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => {
+              if (orderNumber) {
+                try { navigator.clipboard?.writeText(orderNumber); } catch (_) {}
+              }
+            }}
             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-blue-300 text-xs font-bold border border-slate-700 cursor-pointer"
-            title="فتح مجلد متابعة جودة الصور قبل الارفاق على SharePoint"
+            title={
+              orderNumber
+                ? `البحث المباشر عن أمر العمل (${orderNumber}) في جميع ملفات الشير والتوجه إليه مباشرة`
+                : 'فتح مجلد متابعة جودة الصور قبل الارفاق على SharePoint'
+            }
           >
             <FolderOpen className="w-3.5 h-3.5 text-blue-400" />
-            <span className="hidden lg:inline">SharePoint</span>
+            <span className="hidden lg:inline">{orderNumber ? `ملف الشير (${orderNumber})` : 'ملف الشير'}</span>
           </a>
 
           {/* Print button */}

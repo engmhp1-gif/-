@@ -134,10 +134,10 @@ export const OfficialEnterpriseDock: React.FC<OfficialEnterpriseDockProps> = ({
         <button
           type="button"
           onClick={() => setIsOpen(true)}
-          className="group flex items-center gap-1.5 pl-2.5 pr-1.5 py-2.5 rounded-l-xl bg-[#0F2942]/95 hover:bg-[#1E3A5F] text-white shadow-lg border border-r-0 border-[#1E3A5F] transition-all cursor-pointer active:scale-95"
+          className="group flex items-center gap-1.5 pl-2.5 pr-1.5 py-2.5 rounded-l-lg bg-[#004B8D] hover:bg-[#00386b] text-white shadow-lg border border-r-0 border-blue-900 transition-all cursor-pointer active:scale-95"
           title="إظهار الشريط الجانبي الرأسي (مستكشف القوائم والوحدات)"
         >
-          <Layers className="w-4 h-4 text-[#EAB308] shrink-0" />
+          <Layers className="w-4 h-4 text-[#F58220] shrink-0" />
           <ChevronLeft className="w-3.5 h-3.5 text-slate-300 group-hover:text-white transition-transform group-hover:-translate-x-0.5" />
         </button>
       </div>
@@ -152,9 +152,9 @@ export const OfficialEnterpriseDock: React.FC<OfficialEnterpriseDockProps> = ({
       />
       <aside className="hidden lg:flex fixed right-0 top-14 bottom-0 flex-col w-68 bg-[#F8FAFC] border-l border-[#CBD5E1] shadow-2xl shrink-0 select-none z-40 text-right animate-in slide-in-from-right duration-150">
         {/* Top Dock Title Bar */}
-        <div className="px-3.5 py-2.5 bg-[#0F2942] text-white flex items-center justify-between border-b border-[#1E3A5F]">
+        <div className="px-3.5 py-2.5 bg-[#004B8D] text-white flex items-center justify-between border-b border-blue-900">
           <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-[#EAB308]" />
+            <Layers className="w-4 h-4 text-[#F58220]" />
             <span className="text-xs font-black tracking-wide">مستكشف النظام والملفات</span>
           </div>
           <button

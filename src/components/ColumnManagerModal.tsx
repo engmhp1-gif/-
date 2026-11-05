@@ -223,82 +223,20 @@ export const ColumnManagerModal: React.FC<ColumnManagerModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-6">
-          {/* Add New Column Form */}
-          <form onSubmit={handleAddNewColumn} className="bg-gradient-to-br from-blue-50/60 to-indigo-50/60 border border-blue-200/80 rounded-2xl p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <Plus className="w-4 h-4 text-blue-700 font-bold" />
-              <h4 className="text-xs font-bold text-blue-900">إضافة عمود جديد إلى الجدول</h4>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Fixed Canonical 14 Columns Notice */}
+          <div className="bg-gradient-to-br from-blue-50/80 to-indigo-50/80 border border-blue-200 rounded-2xl p-4 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  مسمى العمود الجديد:
-                </label>
-                <input
-                  type="text"
-                  value={newColTitle}
-                  onChange={(e) => setNewColTitle(e.target.value)}
-                  placeholder="مثال: المهندس المشرف، موقع العمل، رقم البلاغ..."
-                  className="w-full px-3 py-2 text-xs bg-white rounded-xl border border-slate-300 focus:outline-hidden focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  نوع خلايا العمود:
-                </label>
-                <div className="flex items-center gap-4 mt-2">
-                  <label className="flex items-center gap-2 text-xs cursor-pointer">
-                    <input
-                      type="radio"
-                      name="colDropdownType"
-                      checked={newColHasDropdown}
-                      onChange={() => setNewColHasDropdown(true)}
-                      className="text-blue-600 focus:ring-blue-500"
-                    />
-                    <span>قائمة منسدلة للاختيار</span>
-                  </label>
-                  <label className="flex items-center gap-2 text-xs cursor-pointer">
-                    <input
-                      type="radio"
-                      name="colDropdownType"
-                      checked={!newColHasDropdown}
-                      onChange={() => setNewColHasDropdown(false)}
-                      className="text-blue-600 focus:ring-blue-500"
-                    />
-                    <span>بيانات نصية</span>
-                  </label>
-                </div>
+                <h4 className="text-xs font-black text-[#002855]">
+                  الأعمدة الـ 14 المعتمدة رسمياً في كافة جداول المنصة (من عمود 1 إلى عمود 14)
+                </h4>
+                <p className="text-[11px] text-slate-600 mt-0.5">
+                  الأعمدة الـ 14 ثابتة ومعتمدة في جميع الجداول، ولا يتم استيراد أي أعمدة إضافية من ملفات الإكسل أو النسخ الاحتياطية. يمكنك تخصيص خيارات القوائم المنسدلة لكل عمود أدناه.
+                </p>
               </div>
             </div>
-
-            {newColHasDropdown && (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  خيارات القائمة المنسدلة الأولية (مفصولة بفواصل أو أسطر):
-                </label>
-                <input
-                  type="text"
-                  value={newColInitialOptions}
-                  onChange={(e) => setNewColInitialOptions(e.target.value)}
-                  placeholder="مثال: مكتمل، جاري الفحص، مؤجل، غير مطابق"
-                  className="w-full px-3 py-2 text-xs bg-white rounded-xl border border-slate-300 focus:outline-hidden focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-            )}
-
-            <div className="flex justify-end">
-              <button
-                type="submit"
-                disabled={!newColTitle.trim()}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>إدراج العمود في الجدول</span>
-              </button>
-            </div>
-          </form>
+          </div>
 
           {/* Existing Columns List */}
           <div>

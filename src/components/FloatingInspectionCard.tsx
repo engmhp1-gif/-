@@ -4,6 +4,7 @@ import {
   WorkOrder, 
   AttachedInspectionFile, 
   SHAREPOINT_AUDIT_URL, 
+  buildSharePointDirectWorkOrderSearchUrl,
   FILE_DELETE_SECRET_PIN 
 } from '../types';
 import { 
@@ -380,16 +381,27 @@ export const FloatingInspectionCard: React.FC<FloatingInspectionCardProps> = ({
 
         {/* Window controls */}
         <div className="flex items-center gap-1 shrink-0" onPointerDown={(e) => e.stopPropagation()}>
-          {/* External SharePoint link button */}
+          {/* External SharePoint link button with direct workOrderNumber search */}
           <a
-            href={SHAREPOINT_AUDIT_URL}
+            href={buildSharePointDirectWorkOrderSearchUrl(order.workOrderNumber, order.sharepointFolderUrl || SHAREPOINT_AUDIT_URL)}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => {
+              if (order.workOrderNumber) {
+                try { navigator.clipboard?.writeText(order.workOrderNumber); } catch (_) {}
+              }
+            }}
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-blue-600/90 hover:bg-blue-600 text-white text-xs font-black border border-blue-400/50 shadow-xs transition-all cursor-pointer"
-            title="فتح مجلد تدقيق الجودة الموحد على SharePoint"
+            title={
+              order.workOrderNumber
+                ? `البحث المباشر عن أمر العمل (${order.workOrderNumber}) في جميع ملفات الشير والتوجه إليه مباشرة`
+                : 'فتح ملف الشير الموحد على SharePoint'
+            }
           >
             <FolderOpen className="w-3.5 h-3.5 text-blue-200" />
-            <span className="hidden sm:inline">مجلد SharePoint</span>
+            <span className="hidden sm:inline">
+              {order.workOrderNumber ? `ملف الشير (${order.workOrderNumber})` : 'ملف الشير'}
+            </span>
           </a>
 
           {/* Minimize / Expand Toggle */}
@@ -439,12 +451,17 @@ export const FloatingInspectionCard: React.FC<FloatingInspectionCardProps> = ({
                 الرابط المعتمد للملفات: <strong className="text-blue-300">متابعة جودة الصور في SharePoint</strong>
               </span>
               <a
-                href={order.sharepointFolderUrl || SHAREPOINT_AUDIT_URL}
+                href={buildSharePointDirectWorkOrderSearchUrl(order.workOrderNumber, order.sharepointFolderUrl || SHAREPOINT_AUDIT_URL)}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => {
+                  if (order.workOrderNumber) {
+                    try { navigator.clipboard?.writeText(order.workOrderNumber); } catch (_) {}
+                  }
+                }}
                 className="text-[10px] text-blue-400 hover:text-blue-300 underline inline-flex items-center gap-0.5 shrink-0"
               >
-                <span>فتح المجلد</span>
+                <span>{order.workOrderNumber ? `بحث مباشر عن (${order.workOrderNumber}) في ملف الشير` : 'فتح المجلد'}</span>
                 <ExternalLink className="w-2.5 h-2.5" />
               </a>
             </div>

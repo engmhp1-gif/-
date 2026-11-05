@@ -88,7 +88,7 @@ export const OfficeSelector: React.FC<OfficeSelectorProps> = ({
   ).length;
 
   const pendingNotesCount = currentOrders.filter(
-    w => w.procedure155Status === 'بانتظار استيفاء الملاحظات' || w.executionStatus === 'معلق لنواقص'
+    w => w.procedure155Status === 'بانتظار استيفاء الملاحظات' || String(w.procedure155Status || '').includes('غير مؤهل')
   ).length;
 
   const boqModifiedCount = currentOrders.filter(
@@ -212,34 +212,34 @@ export const OfficeSelector: React.FC<OfficeSelectorProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs mb-5 overflow-hidden transition-all text-right font-['Cairo',sans-serif]">
+    <div className="bg-white rounded-2xl border-2 border-[#002855]/15 shadow-sm mb-5 overflow-hidden transition-all text-right font-['Cairo',sans-serif]">
       
-      {/* Collapsible Header Bar (دائماً مرئي وسهل الطي والفتح بنقرة واحدة) */}
+      {/* Dynamic Corporate Collapsible Header Bar */}
       <div 
         onClick={() => setIsExpanded(prev => !prev)}
-        className="p-3.5 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+        className="p-4 sm:p-5 bg-gradient-to-l from-[#001D40] via-[#002855] to-[#004B8D] border-b-2 border-[#F58220] text-white flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 cursor-pointer transition-colors select-none"
       >
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-700 border border-blue-200 flex items-center justify-center shrink-0">
-            <MapPin className="w-4 h-4 text-blue-600" />
+          <div className="w-10 h-10 rounded-xl bg-[#F58220] text-white flex items-center justify-center shadow-md shrink-0">
+            <MapPin className="w-5 h-5 text-white" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-xs sm:text-sm font-black text-slate-900">
-                تقسيم المنطقة إلى مكاتب فرعية
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm sm:text-base font-black text-white">
+                إدارة المكاتب الفرعية ومؤشرات الإنجاز الميداني
               </h3>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                {offices.length} مكاتب
+              <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-black bg-white/15 text-[#FDB813] border border-white/20">
+                {offices.length} مكاتب معتمدة
               </span>
             </div>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              فلترة الأوامر ومتابعة مؤشرات كل مكتب فرعي على حدة مع التعديل والإضافة والحذف
+            <p className="text-xs text-blue-100 mt-0.5">
+              فلترة أوامر العمل ومتابعة مؤشرات كل مكتب فرعي على حدة مع التعديل والإضافة وتوزيع المقاولين
             </p>
           </div>
         </div>
 
         {/* Right side: Active office status & collapse trigger */}
-        <div className="flex items-center gap-2 justify-between sm:justify-end">
+        <div className="flex items-center gap-2 justify-between sm:justify-end flex-wrap">
           {onOpenOfficeComparison && hasUserPermission(currentUser, 'viewOfficeComparison') && (
             <button
               type="button"
@@ -247,30 +247,30 @@ export const OfficeSelector: React.FC<OfficeSelectorProps> = ({
                 e.stopPropagation();
                 onOpenOfficeComparison();
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 transition-colors shadow-2xs cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black text-slate-950 bg-[#FDB813] hover:bg-amber-400 transition-colors shadow-xs cursor-pointer"
               title="عرض بيان مقارنة أداء وتوزيع حالات المكاتب الفرعية بالرسم البياني ومعاينة للتصدير"
             >
-              <BarChart3 className="w-3.5 h-3.5 text-amber-700" />
+              <BarChart3 className="w-3.5 h-3.5 text-slate-950" />
               <span>مقارنة أداء المكاتب</span>
             </button>
           )}
 
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-blue-50 text-blue-800 border border-blue-200">
-            <Filter className="w-3.5 h-3.5 text-blue-600" />
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black bg-white/15 text-white border border-white/20">
+            <Filter className="w-3.5 h-3.5 text-[#FDB813]" />
             <span>المكتب النشط:</span>
-            <strong>{selectedOffice === 'all' ? 'جميع المكاتب' : selectedOffice}</strong>
-            <span className="text-[10px] text-blue-600 font-mono">({currentOrders.length})</span>
+            <strong className="text-[#FDB813]">{selectedOffice === 'all' ? 'جميع المكاتب' : selectedOffice}</strong>
+            <span className="text-[10px] text-blue-200 font-mono">({currentOrders.length})</span>
           </span>
 
           <button
             type="button"
-            className="inline-flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition-colors"
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black text-white bg-white/10 hover:bg-white/20 border border-white/20 transition-colors"
           >
             <span>{isExpanded ? 'طي البطاقة' : 'فتح وتغيير المكتب'}</span>
             {isExpanded ? (
-              <ChevronUp className="w-4 h-4 text-slate-500" />
+              <ChevronUp className="w-4 h-4 text-[#FDB813]" />
             ) : (
-              <ChevronDown className="w-4 h-4 text-slate-500" />
+              <ChevronDown className="w-4 h-4 text-[#FDB813]" />
             )}
           </button>
         </div>
@@ -278,7 +278,7 @@ export const OfficeSelector: React.FC<OfficeSelectorProps> = ({
 
       {/* Expandable Body */}
       {isExpanded && (
-        <div className="p-4 pt-0 border-t border-slate-100 space-y-4 animate-in fade-in duration-200">
+        <div className="p-4 pt-0 border-t border-slate-100 space-y-4 bg-[#F4F6F9]/60 animate-in fade-in duration-200">
           
           {/* Sub-Offices Tabs + Manage & Add Office Buttons */}
           <div className="flex items-center justify-between gap-3 pt-3 flex-wrap">
@@ -291,16 +291,16 @@ export const OfficeSelector: React.FC<OfficeSelectorProps> = ({
                   e.stopPropagation();
                   onSelectOffice('all');
                 }}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all cursor-pointer ${
                   selectedOffice === 'all'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    ? 'bg-[#002855] text-white shadow-xs border border-[#F58220]'
+                    : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
                 }`}
               >
-                <Layers className="w-3.5 h-3.5" />
+                <Layers className="w-3.5 h-3.5 text-[#F58220]" />
                 <span>جميع المكاتب</span>
                 <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
-                  selectedOffice === 'all' ? 'bg-slate-700 text-slate-200' : 'bg-slate-200 text-slate-700'
+                  selectedOffice === 'all' ? 'bg-[#F58220] text-white' : 'bg-slate-200 text-slate-700'
                 }`}>
                   {workOrders.length}
                 </span>
@@ -313,10 +313,10 @@ export const OfficeSelector: React.FC<OfficeSelectorProps> = ({
                 return (
                   <div 
                     key={off.id} 
-                    className={`group/tab inline-flex items-center rounded-xl text-xs font-bold whitespace-nowrap transition-all border shrink-0 ${
+                    className={`group/tab inline-flex items-center rounded-xl text-xs font-black whitespace-nowrap transition-all border shrink-0 ${
                       isSelected
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                        : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                        ? 'bg-[#004B8D] text-white border-[#F58220] shadow-xs'
+                        : 'bg-white text-[#002855] border-slate-200 hover:border-[#004B8D] hover:bg-blue-50/40'
                     }`}
                   >
                     <button
@@ -327,10 +327,10 @@ export const OfficeSelector: React.FC<OfficeSelectorProps> = ({
                       }}
                       className="flex items-center gap-2 pl-2 pr-3.5 py-2 cursor-pointer focus:outline-hidden"
                     >
-                      <Building2 className={`w-3.5 h-3.5 ${isSelected ? 'text-blue-200' : 'text-slate-500'}`} />
+                      <Building2 className={`w-3.5 h-3.5 ${isSelected ? 'text-[#FDB813]' : 'text-[#004B8D]'}`} />
                       <span>{off.name}</span>
                       <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                        isSelected ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-700'
+                        isSelected ? 'bg-[#002855] text-[#FDB813]' : 'bg-slate-100 text-slate-700'
                       }`}>
                         {count}
                       </span>

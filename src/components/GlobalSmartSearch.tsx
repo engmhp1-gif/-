@@ -54,7 +54,6 @@ export const GlobalSmartSearch: React.FC<GlobalSmartSearchProps> = ({
       const matchContractor = (order.contractor || '').toLowerCase().includes(q);
       const matchConsultantEntity = (order.consultant || '').toLowerCase().includes(q);
       const matchDate = (order.receiptDate || order.createdAt || '').toLowerCase().includes(q);
-      const matchExecStatus = (order.executionStatus || '').toLowerCase().includes(q);
       const match155Status = (order.procedure155Status || '').toLowerCase().includes(q);
       const matchQualityNotes = (order.qualityNotes || order.executionNotes || '').toLowerCase().includes(q);
       const matchPhotoDoc = (order.photoDocumentation || '').toLowerCase().includes(q);
@@ -71,7 +70,6 @@ export const GlobalSmartSearch: React.FC<GlobalSmartSearchProps> = ({
         matchContractor ||
         matchConsultantEntity ||
         matchDate ||
-        matchExecStatus ||
         match155Status ||
         matchQualityNotes ||
         matchPhotoDoc ||

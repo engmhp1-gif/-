@@ -34,21 +34,47 @@ export interface ChunkedVaultManifest {
   }>;
 }
 
+// In-memory content-addressed cache so unchanged base64 photos/PDFs are never re-hashed or re-compressed
+const memoizedStringShaCache = new Map<string, string>();
+const verifiedSliceFileMetaCache = new Map<string, { sizeBytes: number; sha256: string }>();
+
+function fastSha256Hex(val: string): string {
+  if (val.length > 1024) {
+    const fingerprint = `${val.length}:${val.slice(0, 64)}:${val.slice(-64)}`;
+    const cached = memoizedStringShaCache.get(fingerprint);
+    if (cached) return cached;
+    const computed = sha256Hex(val);
+    if (memoizedStringShaCache.size > 4000) memoizedStringShaCache.clear();
+    memoizedStringShaCache.set(fingerprint, computed);
+    return computed;
+  }
+  return sha256Hex(val);
+}
+
 /**
- * Loads and cryptographically verifies the chunked production vault from `<seedDir>/vault_chunks`.
- * Every single file in `<seedDir>/vault_chunks` is < 380 KB so Cloud Run / AI Studio Publish
+ * Loads and cryptographically verifies the chunked production vault from `<seedDir>/vault_chunks`
+ * (with automatic fallback to `<fallbackDir>/vault_chunks` if provided).
+ * Every single file in `vault_chunks` is < 380 KB so Cloud Run / AI Studio Publish
  * bundles the container image rapidly while preserving 100% of workOrders, users (with passwordHash),
  * monthTables, offices, columns, and all base64 attachments.
  */
-export function loadAuthoritativeChunkedVault(seedDir: string): {
+export function loadAuthoritativeChunkedVault(seedDir: string, fallbackDir?: string): {
   loaded: boolean;
   version: number;
   data?: any;
   error?: string;
 } {
   try {
-    const chunksDir = path.join(seedDir, 'vault_chunks');
-    const manifestPath = path.join(chunksDir, 'manifest.json');
+    let chunksDir = path.join(seedDir, 'vault_chunks');
+    let manifestPath = path.join(chunksDir, 'manifest.json');
+    if (!fs.existsSync(path.join(chunksDir, 'core_db.json.gz')) && fallbackDir) {
+      const altChunksDir = path.join(fallbackDir, 'vault_chunks');
+      if (fs.existsSync(path.join(altChunksDir, 'core_db.json.gz'))) {
+        chunksDir = altChunksDir;
+        manifestPath = path.join(chunksDir, 'manifest.json');
+      }
+    }
+
     let manifest: ChunkedVaultManifest | null = null;
     if (fs.existsSync(manifestPath)) {
       try {
@@ -73,14 +99,18 @@ export function loadAuthoritativeChunkedVault(seedDir: string): {
       const parts: string[] = [];
       let sliceMissingOrCorrupt = false;
       for (const sliceMeta of blobEntry.sliceFiles || []) {
-        const slicePath = path.join(chunksDir, sliceMeta.fileName);
+        let slicePath = path.join(chunksDir, sliceMeta.fileName);
+        if (!fs.existsSync(slicePath) && fallbackDir) {
+          const altSlicePath = path.join(fallbackDir, 'vault_chunks', sliceMeta.fileName);
+          if (fs.existsSync(altSlicePath)) slicePath = altSlicePath;
+        }
         if (!fs.existsSync(slicePath)) {
           sliceMissingOrCorrupt = true;
           break;
         }
         try {
           const partStr = zlib.gunzipSync(fs.readFileSync(slicePath)).toString('utf-8');
-          if (sliceMeta.sha256 && sha256Hex(partStr) !== sliceMeta.sha256) {
+          if (sliceMeta.sha256 && fastSha256Hex(partStr) !== sliceMeta.sha256) {
             sliceMissingOrCorrupt = true;
             break;
           }
@@ -92,7 +122,7 @@ export function loadAuthoritativeChunkedVault(seedDir: string): {
       }
       if (!sliceMissingOrCorrupt && parts.length > 0) {
         const fullBlob = parts.join('');
-        if (!blobEntry.fullSha || sha256Hex(fullBlob) === blobEntry.fullSha) {
+        if (!blobEntry.fullSha || fastSha256Hex(fullBlob) === blobEntry.fullSha) {
           blobsMap.set(blobEntry.blobId, fullBlob);
         }
       }
@@ -163,11 +193,16 @@ export function loadAuthoritativeChunkedVault(seedDir: string): {
 }
 
 /**
- * Updates the chunked production vault in `<seedDir>/vault_chunks`.
- * Existing content-addressed attachment slices (`blob_<sha256>_s<i>.gz`) are reused if already present on disk,
- * so updating `core_db.json.gz` (~21 KB) is instantaneous (< 5ms) and safe.
+ * Updates the chunked production vault in `<seedDir>/vault_chunks` (and optional `<mirrorDir>/vault_chunks`).
+ * Existing content-addressed attachment slices (`blob_<sha256>_s<i>.gz`) are cached in memory and reused on disk,
+ * so updating `core_db.json.gz` (~21 KB) is instantaneous (< 3ms) and non-blocking.
  */
-export function saveAuthoritativeChunkedVault(seedDir: string, data: any, version: number): boolean {
+export function saveAuthoritativeChunkedVault(
+  seedDir: string,
+  data: any,
+  version: number,
+  mirrorDir?: string
+): boolean {
   try {
     const orders = Array.isArray(data?.workOrders) ? data.workOrders : [];
     if (orders.length === 0) return false;
@@ -175,10 +210,20 @@ export function saveAuthoritativeChunkedVault(seedDir: string, data: any, versio
     const chunksDir = path.join(seedDir, 'vault_chunks');
     fs.mkdirSync(chunksDir, { recursive: true });
 
+    const mirrorChunksDir =
+      mirrorDir && path.resolve(mirrorDir) !== path.resolve(seedDir)
+        ? path.join(mirrorDir, 'vault_chunks')
+        : null;
+    if (mirrorChunksDir) {
+      try {
+        fs.mkdirSync(mirrorChunksDir, { recursive: true });
+      } catch (_) {}
+    }
+
     const blobsMap = new Map<string, string>();
     const extractBlobRef = (val: any): any => {
       if (typeof val !== 'string' || val.length < 256) return val;
-      const h = sha256Hex(val).slice(0, 24);
+      const h = fastSha256Hex(val).slice(0, 24);
       const blobId = `blob_${h}`;
       if (!blobsMap.has(blobId)) {
         blobsMap.set(blobId, val);
@@ -217,7 +262,7 @@ export function saveAuthoritativeChunkedVault(seedDir: string, data: any, versio
 
     const savedAtIso = new Date().toISOString();
     const corePayload = {
-      vaultFormat: 'SEC_QCMS_155_CHUNKED_VAULT_V2',
+      vaultFormat: 'SEC_CLOUD_VAULT_V3_CHUNKED',
       version,
       savedAtIso,
       workOrders: lightweightOrders,
@@ -239,16 +284,31 @@ export function saveAuthoritativeChunkedVault(seedDir: string, data: any, versio
     fs.writeFileSync(coreTmp, coreGz);
     fs.renameSync(coreTmp, coreFinal);
 
+    if (mirrorChunksDir) {
+      try {
+        const mCoreTmp = path.join(mirrorChunksDir, 'core_db.json.gz.tmp');
+        const mCoreFinal = path.join(mirrorChunksDir, 'core_db.json.gz');
+        fs.writeFileSync(mCoreTmp, coreGz);
+        fs.renameSync(mCoreTmp, mCoreFinal);
+      } catch (_) {}
+    }
+
     const blobManifest: ChunkedVaultManifest['blobs'] = [];
     for (const [blobId, fullStr] of blobsMap.entries()) {
-      const fullSha = sha256Hex(fullStr);
+      const fullSha = fastSha256Hex(fullStr);
       const totalSlices = Math.ceil(fullStr.length / MAX_SLICE_CHARS);
       const sliceFiles: Array<{ fileName: string; sizeBytes: number; sha256: string }> = [];
       for (let i = 0; i < totalSlices; i++) {
-        const part = fullStr.slice(i * MAX_SLICE_CHARS, (i + 1) * MAX_SLICE_CHARS);
         const fileName = `${blobId}_s${i}.gz`;
         const filePath = path.join(chunksDir, fileName);
-        const partSha = sha256Hex(part);
+        const cachedMeta = verifiedSliceFileMetaCache.get(filePath);
+        if (cachedMeta && fs.existsSync(filePath)) {
+          sliceFiles.push({ fileName, sizeBytes: cachedMeta.sizeBytes, sha256: cachedMeta.sha256 });
+          continue;
+        }
+
+        const part = fullStr.slice(i * MAX_SLICE_CHARS, (i + 1) * MAX_SLICE_CHARS);
+        const partSha = fastSha256Hex(part);
         let sizeBytes = 0;
         if (fs.existsSync(filePath)) {
           sizeBytes = fs.statSync(filePath).size;
@@ -258,14 +318,23 @@ export function saveAuthoritativeChunkedVault(seedDir: string, data: any, versio
           fs.writeFileSync(tmpSlice, gz);
           fs.renameSync(tmpSlice, filePath);
           sizeBytes = gz.length;
+          if (mirrorChunksDir) {
+            try {
+              const mSlicePath = path.join(mirrorChunksDir, fileName);
+              if (!fs.existsSync(mSlicePath)) {
+                fs.writeFileSync(mSlicePath, gz);
+              }
+            } catch (_) {}
+          }
         }
+        verifiedSliceFileMetaCache.set(filePath, { sizeBytes, sha256: partSha });
         sliceFiles.push({ fileName, sizeBytes, sha256: partSha });
       }
       blobManifest.push({ blobId, fullSha, totalLength: fullStr.length, sliceFiles });
     }
 
     const manifest: ChunkedVaultManifest = {
-      vaultFormat: 'SEC_QCMS_155_CHUNKED_VAULT_V2',
+      vaultFormat: 'SEC_CLOUD_VAULT_V3_CHUNKED',
       version,
       savedAtIso,
       workOrdersCount: lightweightOrders.length,
@@ -273,16 +342,26 @@ export function saveAuthoritativeChunkedVault(seedDir: string, data: any, versio
       monthTablesCount: (data.monthTables || []).length,
       officesCount: (data.offices || []).length,
       coreFile: 'core_db.json.gz',
-      coreSha256: sha256Hex(coreJsonStr),
+      coreSha256: fastSha256Hex(coreJsonStr),
       coreGzBytes: coreGz.length,
       blobsCount: blobManifest.length,
       blobs: blobManifest
     };
 
+    const manifestJson = JSON.stringify(manifest, null, 2);
     const manifestTmp = path.join(chunksDir, 'manifest.json.tmp');
     const manifestFinal = path.join(chunksDir, 'manifest.json');
-    fs.writeFileSync(manifestTmp, JSON.stringify(manifest, null, 2), 'utf-8');
+    fs.writeFileSync(manifestTmp, manifestJson, 'utf-8');
     fs.renameSync(manifestTmp, manifestFinal);
+
+    if (mirrorChunksDir) {
+      try {
+        const mManifestTmp = path.join(mirrorChunksDir, 'manifest.json.tmp');
+        const mManifestFinal = path.join(mirrorChunksDir, 'manifest.json');
+        fs.writeFileSync(mManifestTmp, manifestJson, 'utf-8');
+        fs.renameSync(mManifestTmp, mManifestFinal);
+      } catch (_) {}
+    }
     return true;
   } catch (err) {
     console.warn('[Chunked Vault] Warning saving chunked vault:', err);

@@ -61,7 +61,10 @@ import { vaultService } from '../services/vaultService';
 import { realtimeService } from '../services/realtimeService';
 import { getAuthHeaders, isPurgedLegacyUserOrEmail } from '../utils/security';
 import { ensurePhotosFileColumn } from '../data/initialData';
-import { calculateOverallAuditColumnSummary } from '../data/auditChecklistData';
+import {
+  calculateOverallAuditColumnSummary,
+  calculateAggregate18ChecklistsCompliance
+} from '../data/auditChecklistData';
 
 interface ExportPreviewModalProps {
   isOpen: boolean;
@@ -356,7 +359,7 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
   const totalPages = Math.max(1, pageChunks.length);
   const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
 
-  // Summary statistics for KPI header block
+  // Summary statistics for KPI header block & 18-checklist compliance summary
   const readyCount = currentDisplayOrders.filter(
     w => {
       const s = String(w.procedure155Status || '');
@@ -370,6 +373,23 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
       return s.includes('غير');
     }
   ).length;
+
+  const agg18Summary = useMemo(
+    () => calculateAggregate18ChecklistsCompliance(currentDisplayOrders),
+    [currentDisplayOrders]
+  );
+
+  const customRowColorsMap = useMemo<Record<string, string>>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const savedColors = localStorage.getItem('sec_custom_row_colors');
+        if (savedColors) {
+          return JSON.parse(savedColors) || {};
+        }
+      }
+    } catch (_) {}
+    return {};
+  }, [isOpen, currentDisplayOrders.length]);
 
   // Column width percentage distribution ensuring exactly 100% full-width coverage with zero horizontal overflow
   const getColumnWidthStyle = (col: ColumnDefinition, totalCols: number, isLandscape: boolean) => {
@@ -549,20 +569,6 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
       );
     }
 
-    if (col.field === 'executionStatus') {
-      return (
-        <span className={`inline-block px-1.5 py-0.5 rounded font-black ${isLandscape ? 'text-[10px]' : 'text-[8.5px]'} leading-tight break-words whitespace-normal text-center w-full ${
-          val.includes('جاهز') 
-            ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' 
-            : val.includes('معلق') 
-            ? 'bg-amber-100 text-amber-900 border border-amber-300' 
-            : 'bg-slate-100 text-slate-900 border border-slate-300'
-        }`}>
-          {val || '-'}
-        </span>
-      );
-    }
-
     if (col.field === 'workOrderNumber') {
       return (
         <span className={`font-mono font-black text-blue-900 ${isLandscape ? 'text-[11px]' : 'text-[10px]'} leading-tight break-all block`}>
@@ -668,8 +674,7 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
           : 'قيد التدقيق';
       const isQualified = main.includes('مؤهل') && !main.includes('غير');
       const isRejected = main.includes('غير') || main.includes('مرفوض');
-      const hasCategories =
-        overall && (overall.compliantCategories > 0 || overall.nonCompliantCategories > 0 || overall.naCategories > 0);
+      const evaluatedCats = overall ? (overall.compliantCategories + overall.nonCompliantCategories + overall.naCategories) : 0;
 
       return (
         <div className="flex flex-col items-center justify-center gap-0.5 text-center w-full">
@@ -682,11 +687,15 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
           }`}>
             {main}
           </span>
-          {hasCategories ? (
-            <span className="text-[7.5px] font-mono font-bold text-slate-700 leading-tight">
-              {overall.averageCompliance}% (م:{overall.compliantCategories} • غ:{overall.nonCompliantCategories})
+          {evaluatedCats > 0 && overall ? (
+            <span className="text-[7px] font-mono font-bold text-slate-700 leading-tight">
+              {overall.averageCompliance}% ({evaluatedCats}/18: م{overall.compliantCategories}•غ{overall.nonCompliantCategories})
             </span>
-          ) : null}
+          ) : (
+            <span className="text-[6.5px] font-mono font-semibold text-slate-500 leading-tight">
+              18 قائمة (197 بند)
+            </span>
+          )}
         </div>
       );
     }
@@ -1742,13 +1751,13 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
         }
       `}</style>
 
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-7xl w-full my-2 overflow-hidden flex flex-col text-right print:border-none print:shadow-none print:rounded-none">
+      <div className="bg-white rounded-2xl shadow-2xl border-2 border-[#002855] max-w-7xl w-full my-2 overflow-hidden flex flex-col text-right print:border-none print:shadow-none print:rounded-none">
         
         {/* Top Header & Export Actions Toolbar */}
-        <div className="bg-slate-900 text-white px-4 py-3 sm:px-6 sm:py-3.5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-slate-800 print:hidden">
+        <div className="bg-gradient-to-l from-[#002855] via-[#003B73] to-[#0A192F] text-white px-4 py-3 sm:px-6 sm:py-3.5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b-2 border-[#F58220] print:hidden">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <FileDown className="w-5 h-5 text-emerald-400 shrink-0" />
+              <FileDown className="w-5 h-5 text-[#FDB813] shrink-0" />
               <h2 className="text-base sm:text-lg font-bold text-white">
                 منظومة تصدير أوامر العمل (PDF / Excel / PPTX)
               </h2>
@@ -2204,25 +2213,25 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
                       transformOrigin: 'top center'
                     }}
                   >
-                  {/* Top Header: Strictly Conforming to User Requirements */}
-                  <div className="w-full border-b-2 border-slate-900 pb-2 mb-2 shrink-0">
-                    <div className="flex items-center justify-between gap-4 py-1">
+                  {/* Top Header: Corporate Navy & Amber Standard */}
+                  <div className="w-full border-b-2 border-[#F58220] pb-2 mb-2 shrink-0">
+                    <div className="flex items-center justify-between gap-4 px-3.5 py-2 rounded-lg bg-gradient-to-l from-[#002855] via-[#003B73] to-[#004B8D] text-white">
                       {/* Right: Platform Header with Graded Typography */}
                       <div className="text-right flex flex-col gap-0.5">
-                        <span className="text-sm sm:text-base font-black text-slate-950 leading-tight">
-                          حوكمة جودة اعمال الانشاءات
+                        <span className="text-sm sm:text-base font-black text-[#FDB813] leading-tight">
+                          حوكمة جودة أعمال الإنشاءات
                         </span>
-                        <span className="text-xs sm:text-[13px] font-bold text-slate-800 leading-tight">
-                          منظومة ادارة كهرباء الحدود الشمالية
+                        <span className="text-xs sm:text-[13px] font-bold text-white leading-tight">
+                          منظومة إدارة كهرباء الحدود الشمالية
                         </span>
-                        <span className="text-[11px] font-semibold text-slate-600 leading-tight">
-                          المساندة الفنية
+                        <span className="text-[11px] font-semibold text-blue-100 leading-tight">
+                          المساندة الفنية • إجراء 155
                         </span>
                       </div>
 
                       {/* Center: Concise Table Name Only */}
                       <div className="text-center">
-                        <h3 className="text-xs sm:text-sm font-black text-slate-900">
+                        <h3 className="text-xs sm:text-sm font-black text-[#002855] bg-[#FDB813] px-4 py-1 rounded-md border border-[#F58220] shadow-2xs">
                           {(officeTitle || 'أوامر العمل')
                             .replace(/تقرير\s+شامل(\s+وجميع\s+المكاتب\s+الفرعية)?/gi, '')
                             .replace(/جميع\s+المكاتب\s+الفرعية/gi, 'جميع المكاتب')
@@ -2233,33 +2242,39 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
                       </div>
 
                       {/* Left: Date Only */}
-                      <div className="text-left text-xs font-mono font-bold text-slate-800">
+                      <div className="text-left text-xs font-mono font-bold text-blue-100">
                         التاريخ: {new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())}
                       </div>
                     </div>
 
-                    {/* ( مؤشرات الاداء ) */}
+                    {/* ( مؤشرات الأداء وملخص امتثال القوائم الـ 18 ) */}
                     <div className="mt-2 shrink-0">
-                      <div className="text-[11px] font-black text-slate-900 mb-1 text-center font-['Cairo',sans-serif]">
-                        ( مؤشرات الاداء )
+                      <div className="text-[10.5px] font-black text-slate-900 mb-1 text-center font-['Cairo',sans-serif]">
+                        ( مؤشرات الأداء وملخص امتثال القوائم الـ 18 المعتمدة - 197 بند فحص )
                       </div>
-                      <div className="grid grid-cols-4 gap-2 text-center">
+                      <div className="grid grid-cols-5 gap-1.5 text-center">
                         <div className="p-1.5 rounded-lg bg-slate-50 border border-slate-300">
-                          <span className="text-[10px] text-slate-600 font-bold block">إجمالي أوامر العمل</span>
+                          <span className="text-[9.5px] text-slate-600 font-bold block">إجمالي أوامر العمل</span>
                           <strong className="text-sm font-black text-slate-900 font-mono">{currentDisplayOrders.length}</strong>
                         </div>
                         <div className="p-1.5 rounded-lg bg-emerald-50 border border-emerald-300">
-                          <span className="text-[10px] text-emerald-800 font-bold block">مؤهل للاغلاق ( معتمد )</span>
-                          <strong className="text-sm font-black text-emerald-700 font-mono">{readyCount}</strong>
+                          <span className="text-[9.5px] text-emerald-800 font-bold block">مؤهل للاغلاق (155)</span>
+                          <strong className="text-sm font-black text-emerald-700 font-mono">{readyCount} ({agg18Summary.ready155Rate}%)</strong>
                         </div>
                         <div className="p-1.5 rounded-lg bg-rose-50 border border-rose-300">
-                          <span className="text-[10px] text-rose-800 font-bold block">غير مؤهل للأغلاق</span>
+                          <span className="text-[9.5px] text-rose-800 font-bold block">غير مؤهل للأغلاق</span>
                           <strong className="text-sm font-black text-rose-700 font-mono">{notesCount}</strong>
                         </div>
+                        <div className="p-1.5 rounded-lg bg-teal-50 border border-teal-300">
+                          <span className="text-[9.5px] text-teal-800 font-bold block">امتثال القوائم الـ 18 (PDC / إنشاءات)</span>
+                          <strong className="text-xs font-black text-teal-700 font-mono">
+                            PDC: {agg18Summary.pdcComplianceRate}% | إنشاءات: {agg18Summary.constComplianceRate}%
+                          </strong>
+                        </div>
                         <div className="p-1.5 rounded-lg bg-blue-50 border border-blue-300">
-                          <span className="text-[10px] text-blue-800 font-bold block">نسبة المطابقة الفنية</span>
+                          <span className="text-[9.5px] text-blue-800 font-bold block">نسبة المطابقة الفعلية الشاملة</span>
                           <strong className="text-sm font-black text-blue-700 font-mono">
-                            {currentDisplayOrders.length > 0 ? Math.round((readyCount / currentDisplayOrders.length) * 100) : 0}%
+                            {agg18Summary.actualComplianceRate}%
                           </strong>
                         </div>
                       </div>
@@ -2267,13 +2282,13 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
                   </div>
 
                   {/* Smart Adaptive Table: Fits 100% full-width and full-height with zero dead whitespace */}
-                  <div className="w-full flex-1 flex flex-col min-h-0 justify-between my-1.5 overflow-hidden border-2 border-slate-700 rounded-xl shadow-xs">
+                  <div className="w-full flex-1 flex flex-col min-h-0 justify-between my-1.5 overflow-hidden border-2 border-[#002855] rounded-xl shadow-xs">
                     <table className="w-full h-full table-fixed text-right border-collapse flex-1">
-                      {/* Distinct Red Table Header */}
-                      <thead className="bg-red-800 text-white font-black shrink-0">
-                        <tr className="border-b-2 border-red-950">
+                      {/* Corporate Navy Table Header with Amber Bottom Border */}
+                      <thead className="bg-[#002855] text-white font-black shrink-0">
+                        <tr className="border-b-2 border-[#F58220]">
                           {/* Row sequence # */}
-                          <th className={`p-1.5 text-center border-l border-red-900 ${effectiveOrientation === 'landscape' ? 'w-[3.5%] text-[10px]' : 'w-[4%] text-[9.5px]'} font-mono`}>
+                          <th className={`p-1.5 text-center border-l border-[#1e3a8a] text-[#FDB813] ${effectiveOrientation === 'landscape' ? 'w-[3.5%] text-[10px]' : 'w-[4%] text-[9.5px]'} font-mono`}>
                             #
                           </th>
                           {/* All Active Columns rendered dynamically with no omissions */}
@@ -2282,7 +2297,7 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
                               key={col.id} 
                               style={{ width: getColumnWidthStyle(col, activeColumns.length, effectiveOrientation === 'landscape') }}
                               className={`p-1.5 ${effectiveOrientation === 'landscape' ? 'text-[10.5px]' : 'text-[9.5px]'} font-black leading-tight break-words text-right ${
-                                cIdx < activeColumns.length - 1 ? 'border-l border-red-900' : ''
+                                cIdx < activeColumns.length - 1 ? 'border-l border-[#1e3a8a]' : ''
                               }`}
                             >
                               {col.title.replace(/^\d+\.\s*/, '')}
@@ -2310,16 +2325,7 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
                                 previousCapacitySum += pageChunks[p].length;
                               }
                               const globalIndex = previousCapacitySum + rowIdx + 1;
-                              let customRowColor: string | undefined;
-                              try {
-                                if (typeof window !== 'undefined') {
-                                  const savedColors = localStorage.getItem('sec_custom_row_colors');
-                                  if (savedColors) {
-                                    const parsed = JSON.parse(savedColors);
-                                    if (parsed && parsed[wo.id]) customRowColor = parsed[wo.id];
-                                  }
-                                }
-                              } catch (_) {}
+                              const customRowColor = customRowColorsMap[wo.id];
 
                               const isEven = rowIdx % 2 === 0;
                               const rowBg = customRowColor ? '' : isEven ? 'bg-white' : 'bg-slate-50';
@@ -2385,6 +2391,31 @@ export const ExportPreviewModal: React.FC<ExportPreviewModalProps> = ({
                       </tbody>
                     </table>
                   </div>
+
+                  {/* ملخص الامتثال لجميع القوائم الـ 18 ونسبة المطابقة الفعلية في الصفحة الأخيرة */}
+                  {pageIndex === pageChunks.length - 1 && (
+                    <div className="w-full mb-1.5 p-1.5 rounded-lg bg-slate-50 border border-slate-300 shrink-0">
+                      <div className="flex items-center justify-between text-[9.5px] font-black text-slate-900 mb-1 px-1">
+                        <span>ملخص الامتثال التفصيلي للقوائم الـ 18 المعتمدة (197 بند فحص)</span>
+                        <span className="text-blue-800 font-mono">
+                          نسبة المطابقة الفعلية: {agg18Summary.actualComplianceRate}% | جاهزية 155: {agg18Summary.ready155Rate}%
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-6 gap-1 text-[8.5px]">
+                        {agg18Summary.perCategory.map((cat) => (
+                          <div
+                            key={cat.key}
+                            className="flex items-center justify-between px-1.5 py-0.5 rounded bg-white border border-slate-200"
+                          >
+                            <span className="font-bold text-slate-800 truncate">{cat.number}. {cat.shortTitle}</span>
+                            <span className="font-mono font-black text-emerald-700 shrink-0">
+                              {cat.actualComplianceRate}%
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Bottom Footer: Strictly Page Number Only */}
                   <div className="w-full mt-auto py-1 text-center text-xs font-mono font-black text-slate-800 border-t-2 border-slate-900 shrink-0">

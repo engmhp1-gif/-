@@ -266,10 +266,10 @@ export const UnifiedSectionExportBar: React.FC<UnifiedSectionExportBarProps> = (
         onClick={() => setIsDropdownOpen(prev => !prev)}
         className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-black border transition-all cursor-pointer active:scale-95 whitespace-nowrap ${
           isDropdownOpen
-            ? 'bg-amber-500 text-slate-950 border-amber-300 shadow-md ring-2 ring-amber-400/40'
+            ? 'bg-[#F58220] text-white border-[#FDB813] shadow-md ring-2 ring-[#F58220]/40'
             : isLight
-            ? 'bg-slate-900 hover:bg-slate-800 text-white border-slate-700 shadow-xs'
-            : 'bg-slate-800/90 hover:bg-slate-700 text-amber-300 border-amber-500/40 shadow-xs'
+            ? 'bg-[#002855] hover:bg-[#003B73] text-white border-[#F58220]/60 shadow-xs'
+            : 'bg-[#002855]/95 hover:bg-[#003B73] text-[#FDB813] border-[#F58220]/60 shadow-xs'
         }`}
         title="خيارات التصدير الشامل والطباعة والمعاينة (مماثل لجدول أوامر العمل)"
       >
@@ -301,14 +301,14 @@ export const UnifiedSectionExportBar: React.FC<UnifiedSectionExportBarProps> = (
               maxHeight: `${dropdownCoords.maxHeight}px`,
               zIndex: 999999
             }}
-            className="bg-slate-900/98 backdrop-blur-2xl border-2 border-slate-700 rounded-2xl shadow-[0_24px_60px_rgba(0,0,0,0.85)] overflow-y-auto p-2 text-right font-['Cairo',sans-serif] animate-in fade-in zoom-in-95 duration-150"
+            className="bg-[#001D40]/98 backdrop-blur-2xl border-2 border-[#F58220] rounded-2xl shadow-[0_24px_60px_rgba(0,0,0,0.85)] overflow-y-auto p-2 text-right font-['Cairo',sans-serif] animate-in fade-in zoom-in-95 duration-150"
           >
-            <div className="px-3 py-2 border-b border-slate-800 mb-1.5 flex items-center justify-between">
+            <div className="px-3 py-2 border-b border-blue-800/70 mb-1.5 flex items-center justify-between bg-[#002855] rounded-xl">
               <div>
-                <div className="text-xs font-black text-white">منظومة التصدير الموحدة</div>
-                <div className="text-[10px] text-slate-400 font-bold truncate max-w-[190px]">{safeTitle}</div>
+                <div className="text-xs font-black text-[#FDB813]">منظومة التصدير الموحدة</div>
+                <div className="text-[10px] text-blue-100 font-bold truncate max-w-[190px]">{safeTitle}</div>
               </div>
-              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono font-black">
+              <span className="px-2 py-0.5 rounded-full bg-[#F58220] text-white text-[10px] font-mono font-black">
                 {orders.length} أمر
               </span>
             </div>
@@ -318,10 +318,10 @@ export const UnifiedSectionExportBar: React.FC<UnifiedSectionExportBarProps> = (
                 <button
                   type="button"
                   onClick={handlePreviewModal}
-                  className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-indigo-600/30 to-blue-600/20 hover:from-indigo-600 hover:to-blue-600 text-indigo-200 hover:text-white border border-indigo-500/30 transition-all cursor-pointer"
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-[#004B8D] to-[#002855] hover:from-[#F58220] hover:to-amber-600 text-white border border-blue-400/40 transition-all cursor-pointer"
                 >
                   <div className="flex items-center gap-2">
-                    <Eye className="w-4 h-4 text-cyan-300" />
+                    <Eye className="w-4 h-4 text-[#FDB813]" />
                     <span>معاينة وتصدير شامل (نمط الجدول)</span>
                   </div>
                   <span className="text-[10px] font-mono bg-black/30 px-1.5 py-0.5 rounded">A4/A3</span>

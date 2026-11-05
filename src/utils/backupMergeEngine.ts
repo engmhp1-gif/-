@@ -1,5 +1,6 @@
 import type { PlatformUser, UserPermissions } from '../types.ts';
 import { EMPTY_PERMISSIONS, isPurgedLegacyUserOrEmail } from './security.ts';
+import { INITIAL_COLUMNS, ensurePhotosFileColumn } from '../data/initialData.ts';
 
 type BooleanPermissionKey = Exclude<keyof UserPermissions, 'allowedColumns'>;
 
@@ -337,26 +338,35 @@ export function normalizeLegacyWorkOrder(
     order.contractor = '';
   }
 
-  // Normalize tableYear / tableMonth if provided as strings or inferred from tableId
-  if (order.tableYear !== undefined && order.tableYear !== null && typeof order.tableYear !== 'number') {
-    const parsedY = parseInt(String(order.tableYear), 10);
+  // Normalize tableYear / tableMonth / tableName if provided as strings or Arabic keys
+  const rawYear = order.tableYear ?? order.year ?? order['السنة'] ?? order['سنة الجدول'];
+  if (rawYear !== undefined && rawYear !== null) {
+    const parsedY = parseInt(String(rawYear), 10);
     if (Number.isFinite(parsedY) && parsedY >= 2000 && parsedY <= 2100) {
       order.tableYear = parsedY;
     }
   }
-  if (order.tableMonth !== undefined && order.tableMonth !== null && typeof order.tableMonth !== 'number') {
-    const parsedM = parseInt(String(order.tableMonth), 10);
+  const rawMonth = order.tableMonth ?? order.month ?? order['الشهر'] ?? order['شهر الجدول'];
+  if (rawMonth !== undefined && rawMonth !== null) {
+    const parsedM = parseInt(String(rawMonth), 10);
     if (Number.isFinite(parsedM) && parsedM >= 1 && parsedM <= 12) {
       order.tableMonth = parsedM;
     }
+  }
+  const rawTableName = order.tableName ?? order['اسم الجدول'] ?? order['الجدول'];
+  if (!order.tableName && rawTableName && typeof rawTableName === 'string') {
+    order.tableName = rawTableName.trim();
   }
 
   const isUnresolvedBlobMarker = (val: any) =>
     typeof val === 'string' && (val.startsWith('__VAULT_BLOB_REF__:') || val.startsWith('__ATT_REF__:'));
 
-  // Legacy attachment arrays (attachments / files -> photosFile)
+  // Legacy attachment arrays (attachments / files / single object -> photosFile)
   if (!Array.isArray(order.photosFile)) {
-    const legacyFiles = Array.isArray(order.attachments)
+    const singleObjFile = order.photosFile && typeof order.photosFile === 'object' ? [order.photosFile] : null;
+    const legacyFiles = singleObjFile
+      ? singleObjFile
+      : Array.isArray(order.attachments)
       ? order.attachments
       : Array.isArray(order.files)
       ? order.files
@@ -376,6 +386,8 @@ export function normalizeLegacyWorkOrder(
         })
         .filter((f: any) => Boolean(f.dataUrl));
       wasNormalized = true;
+    } else {
+      delete order.photosFile;
     }
   } else {
     order.photosFile = order.photosFile
@@ -422,6 +434,31 @@ export function normalizeLegacyWorkOrder(
       .filter(Boolean);
   }
 
+  // Normalize string audit columns (e.g. from Excel or simplified JSON exports) into structured audit objects
+  const normalizeAuditField = (rawAudit: any) => {
+    if (!rawAudit) return undefined;
+    if (typeof rawAudit === 'object' && !Array.isArray(rawAudit)) return rawAudit;
+    if (typeof rawAudit === 'string') {
+      const clean = rawAudit.trim();
+      if (!clean) return undefined;
+      return {
+        mainStatus: clean,
+        supportChecklist: {},
+        evaluatedKeys: []
+      };
+    }
+    return undefined;
+  };
+  if (order.pdcAudit !== undefined || order['تدقيق PDC'] !== undefined) {
+    order.pdcAudit = normalizeAuditField(order.pdcAudit ?? order['تدقيق PDC']);
+  }
+  if (order.constructionAudit !== undefined || order['تدقيق الإنشاءات'] !== undefined) {
+    order.constructionAudit = normalizeAuditField(order.constructionAudit ?? order['تدقيق الإنشاءات']);
+  }
+  if (order.technicalSupportAudit !== undefined) {
+    order.technicalSupportAudit = normalizeAuditField(order.technicalSupportAudit);
+  }
+
   // Legacy status & notes normalization (with Arabic aliases)
   if (!order.photoDocumentation) {
     order.photoDocumentation = order.photoCoordination || order['توثيق الصور'] || 'مكتمل';
@@ -431,16 +468,16 @@ export function normalizeLegacyWorkOrder(
   if (!order.consultantClearanceForms) order.consultantClearanceForms = order['نماذج إجازة الاستشاري'] || 'مكتمل';
   if (!order.form190) order.form190 = order['نموذج 190'] || 'مكتمل';
   if (!order.form200) order.form200 = order['نموذج 200'] || 'مكتمل';
-  if (!order.inspectionForm) order.inspectionForm = order['استمارة الفحص'] || 'مكتمل';
+  if (!order.inspectionForm) order.inspectionForm = order['استمارة الفحص'] || order['نموذج الفحص'] || 'مكتمل';
   if (order.qualityNotes === undefined) {
     order.qualityNotes = order.executionNotes || order['ملاحظات الجودة'] || order['الملاحظات'] || '';
     if (order.executionNotes || order['ملاحظات الجودة'] || order['الملاحظات']) wasNormalized = true;
   }
   if (!order.procedure155Status) {
-    order.procedure155Status = order.status155 || order['تدقيق المساندة الفنية'] || 'مؤهل للاغلاق';
+    order.procedure155Status = order.status155 || order['تدقيق المساندة الفنية'] || order['حالة أمر العمل'] || 'قيد التدقيق';
   }
-  if (!order.procedure155 && order['اجراء 155']) {
-    order.procedure155 = order['اجراء 155'];
+  if (!order.procedure155 && (order['اجراء 155'] || order['إجراء 155'])) {
+    order.procedure155 = order['اجراء 155'] || order['إجراء 155'];
   }
   if (!order.receiptDate) {
     order.receiptDate = order.createdAt ? String(order.createdAt).slice(0, 10) : '2026-03-01';
@@ -450,8 +487,11 @@ export function normalizeLegacyWorkOrder(
   if (!order.id || typeof order.id !== 'string' || !order.id.trim()) {
     const fingerprint = JSON.stringify({
       workOrderNumber: order.workOrderNumber,
+      workOrderCode: order.workOrderCode || '',
       office: order.office,
       contractor: order.contractor,
+      tableId: order.tableId || '',
+      tableName: order.tableName || '',
       createdAt: order.createdAt || '',
       qualityNotes: order.qualityNotes || '',
       index
@@ -1520,7 +1560,33 @@ export function analyzeAndMergeBackup(
   }
   // Also auto-synthesize any custom MonthTable referenced by mergedWorkOrders so no imported order is ever orphaned
   for (const ord of mergedWorkOrders) {
-    const tid = ord?.tableId ? String(ord.tableId).trim() : '';
+    let tid = ord?.tableId ? String(ord.tableId).trim() : '';
+    const tName = ord?.tableName ? String(ord.tableName).trim() : '';
+    const isGenericDefaultName =
+      !tName ||
+      tName.startsWith('جدول الشهر') ||
+      tName.startsWith('الجدول الرئيسي') ||
+      tName.startsWith('الجدول الأساسي');
+
+    if ((!tid || tid.startsWith('default-')) && !isGenericDefaultName) {
+      const inferredY = Number(ord.tableYear) || new Date().getFullYear();
+      const inferredM = Number(ord.tableMonth) || new Date().getMonth() + 1;
+      const existingSameName = Array.from(tablesMap.values()).find(
+        (t: any) =>
+          t &&
+          Number(t.year) === inferredY &&
+          (t.month === 'all' || Number(t.month) === inferredM) &&
+          String(t.name || '').trim() === tName
+      );
+      if (existingSameName) {
+        tid = existingSameName.id;
+        ord.tableId = tid;
+      } else {
+        tid = `tbl-${inferredY}-${inferredM}-${sha256Short(tName).slice(0, 8)}`;
+        ord.tableId = tid;
+      }
+    }
+
     if (tid && tid !== 'all' && !tid.startsWith('default-') && !tablesMap.has(tid)) {
       const mMatch = tid.match(/^tbl-(\d{4})-(\d{1,2})-/);
       const inferredYear = Number(ord.tableYear) || (mMatch ? Number(mMatch[1]) : new Date().getFullYear());
@@ -1529,7 +1595,7 @@ export function analyzeAndMergeBackup(
         id: tid,
         year: inferredYear,
         month: inferredMonth,
-        name: ord.tableName ? String(ord.tableName).trim() : `جدول مستورد (${tid.slice(-4)})`,
+        name: tName || `جدول مستورد (${tid.slice(-4)})`,
         description: 'تم استرداده تلقائياً من سجلات أوامر العمل المستوردة',
         color: 'blue',
         isDefault: false,
@@ -1655,22 +1721,34 @@ export function analyzeAndMergeBackup(
       officeByName.set(incOff.name, { ...prevOff, contractors: mergedContractors });
     }
   }
-  const mergedOffices = Array.from(officeByName.values());
-
-  const currentColumns: any[] = Array.isArray(currentDb?.columns)
-    ? JSON.parse(JSON.stringify(currentDb.columns))
-    : [];
-  const incomingColumns: any[] = Array.isArray(payload.columns) ? payload.columns : [];
-  const colByField = new Map<string, any>();
-  for (const c of currentColumns) {
-    if (c && c.field) colByField.set(c.field, c);
-  }
-  for (const incC of incomingColumns) {
-    if (incC && incC.field && !colByField.has(incC.field) && incC.field !== 'receiptDate') {
-      colByField.set(incC.field, incC);
+  // Also ensure any contractor referenced in mergedWorkOrders is added to its office
+  for (const ord of mergedWorkOrders) {
+    const offName = ord?.office ? String(ord.office).trim() : '';
+    const contName = ord?.contractor ? String(ord.contractor).trim() : '';
+    if (!offName || offName === 'غير محدد') continue;
+    const prevOff = officeByName.get(offName);
+    if (prevOff && contName && contName !== 'غير محدد' && contName !== 'المقاول الرئيسي المعتمد') {
+      const list = Array.isArray(prevOff.contractors) ? prevOff.contractors : [];
+      if (!list.includes(contName)) {
+        officeByName.set(offName, { ...prevOff, contractors: [...list, contName] });
+      }
     }
   }
-  const mergedColumns = Array.from(colByField.values());
+  const mergedOffices = Array.from(officeByName.values());
+
+  // Clean up any customFields on mergedWorkOrders so no 15th/extra columns are ever attached from backups
+  for (const ord of mergedWorkOrders) {
+    if (ord && ord.customFields) {
+      delete ord.customFields;
+    }
+  }
+
+  // Strictly enforce only the 14 canonical platform columns (never import any new or 15th columns from backups!)
+  const mergedColumns = ensurePhotosFileColumn(
+    Array.isArray(currentDb?.columns) && currentDb.columns.length > 0
+      ? currentDb.columns
+      : INITIAL_COLUMNS
+  );
 
   const mergedDropdownOptions: Record<string, any> = JSON.parse(
     JSON.stringify(currentDb?.dropdownOptions || {})

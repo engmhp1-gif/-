@@ -1,50 +1,52 @@
 import React from 'react';
-import { 
-  PlusCircle, 
-  Search, 
-  Edit3, 
-  FileDown, 
-  ListOrdered, 
-  Columns3, 
-  Trash2, 
-  RotateCcw, 
-  X, 
-  ClipboardCheck, 
-  Radio, 
-  Users, 
-  Layers3, 
-  CheckCircle2, 
+import {
+  Home,
+  PlusCircle,
+  Search,
+  Radio,
+  Users,
   ShieldCheck,
-  ChevronRight, 
-  ChevronLeft, 
-  Sparkles, 
-  Lock, 
-  Calendar, 
-  Activity, 
-  ArrowRight, 
-  RefreshCw, 
-  FolderSync, 
-  History, 
-  Volume2, 
-  VolumeX, 
-  Award, 
-  FileText, 
-  Zap, 
-  ChevronsRight, 
-  ChevronsLeft,
+  Lock,
+  Calendar,
+  BarChart3,
+  RefreshCw,
+  FolderSync,
+  History,
+  FileText,
+  Zap,
+  ChevronsRight,
   Building2,
   Briefcase,
   FileSpreadsheet,
-  FileEdit,
-  Bell,
-  BellRing,
-  KeyRound,
   LogOut,
-  UserCheck
+  UserCheck,
+  ListChecks
 } from 'lucide-react';
 import { SyncStatus } from '../services/realtimeService';
 import { PlatformUser } from '../types';
-import { hasUserPermission, hasFullPermissions } from '../utils/security';
+import { hasUserPermission, canAccessSidebarSection } from '../utils/security';
+
+export type SidebarSectionId =
+  | 'home'
+  | 'projects'
+  | 'work_orders'
+  | 'quality_ncr'
+  | 'visits'
+  | 'documents'
+  | 'admin_dashboard'
+  | 'regions_dashboard'
+  | 'contractors'
+  | 'consultants'
+  | 'calendar'
+  | 'audit_trail'
+  | 'settings';
+
+export function normalizeSidebarSectionId(sec?: SidebarSectionId | string): SidebarSectionId {
+  if (!sec) return 'home';
+  if (sec === 'projects') return 'work_orders';
+  if (sec === 'consultants') return 'contractors';
+  return sec as SidebarSectionId;
+}
 
 interface SidebarActionsProps {
   isOpen: boolean;
@@ -55,6 +57,11 @@ interface SidebarActionsProps {
   totalOrdersCount: number;
   ready155Count: number;
   columnsCount: number;
+  officesCount?: number;
+  contractorsCount?: number;
+  trackedAuditCount?: number;
+  fullyAuditedCount?: number;
+  activeYear?: number;
   onManualSync: () => void;
   isManualSyncing: boolean;
   onOpenAddModal: () => void;
@@ -85,130 +92,236 @@ interface SidebarActionsProps {
   isSoundMuted?: boolean;
   onToggleSound?: () => void;
   onOpenAboutPlatform?: () => void;
+  activeViewTab?: string;
+  onSelectViewTab?: (tab: any) => void;
+  activeSidebarSection?: SidebarSectionId;
+  onSelectSidebarSection?: (section: SidebarSectionId) => void;
+  onOpenExecutiveDashboard?: () => void;
+  onOpenYearMonthPicker?: () => void;
 }
+
+export const SIDEBAR_SECTIONS_META: Array<{
+  id: SidebarSectionId;
+  label: string;
+  subtitle: string;
+  badge?: string;
+  icon: React.ComponentType<{ className?: string }>;
+  iconColorClass: string;
+}> = [
+  {
+    id: 'home',
+    label: 'الصفحة الرئيسية',
+    subtitle: 'النظرة التنفيذية الشاملة والملخص العام',
+    icon: Home,
+    iconColorClass: 'text-white'
+  },
+  {
+    id: 'work_orders',
+    label: 'جدول أوامر العمل والتدقيق',
+    subtitle: 'السجل الميداني ومراحل التدقيق وجداول الشهور',
+    icon: FileSpreadsheet,
+    iconColorClass: 'text-emerald-300'
+  },
+  {
+    id: 'admin_dashboard',
+    label: 'مؤشرات الأداء والقياس (KPIs)',
+    subtitle: 'لوحة القياس ونسب الإنجاز والامتثال',
+    icon: BarChart3,
+    iconColorClass: 'text-rose-300'
+  },
+  {
+    id: 'quality_ncr',
+    label: 'الدليل الإرشادي ومراحل التحقق',
+    subtitle: 'ضوابط إجراء 155 ومراحل التحقق الـ 18',
+    badge: '18 مرحلة',
+    icon: ShieldCheck,
+    iconColorClass: 'text-teal-300'
+  },
+  {
+    id: 'audit_trail',
+    label: 'متابعة التدقيق وأرشيف 155',
+    subtitle: 'التنبيه العاجل، المؤهل 100%، وسجل العمليات',
+    icon: ListChecks,
+    iconColorClass: 'text-amber-300'
+  },
+  {
+    id: 'regions_dashboard',
+    label: 'المكاتب الفرعية ومقارنة الأداء',
+    subtitle: 'عرعر • رفحاء • طريف • العويقيلة',
+    icon: Building2,
+    iconColorClass: 'text-sky-300'
+  },
+  {
+    id: 'contractors',
+    label: 'المقاولون والاستشاريون',
+    subtitle: 'تقييم المقاولين ونماذج إجازة الاستشاري',
+    icon: Briefcase,
+    iconColorClass: 'text-indigo-300'
+  },
+  {
+    id: 'calendar',
+    label: 'الأرشيف السنوي وجداول الشهور',
+    subtitle: 'إدارة الفترات المالية والجداول المستقلة',
+    icon: Calendar,
+    iconColorClass: 'text-yellow-300'
+  },
+  {
+    id: 'visits',
+    label: 'التقارير والملاحظات الميدانية',
+    subtitle: 'التقارير المعتمدة والملاحظات والصور',
+    icon: FileText,
+    iconColorClass: 'text-purple-300'
+  },
+  {
+    id: 'documents',
+    label: 'الاستيراد والتصدير والنسخ الاحتياطي',
+    subtitle: 'Excel • الجداول المتوافقة • الخزنة السحابية',
+    icon: FolderSync,
+    iconColorClass: 'text-emerald-300'
+  },
+  {
+    id: 'settings',
+    label: 'إعدادات النظام والصلاحيات',
+    subtitle: 'المستخدمون، الأعمدة، القوائم، والإشعارات',
+    icon: Lock,
+    iconColorClass: 'text-pink-300'
+  }
+];
 
 export const SidebarActions: React.FC<SidebarActionsProps> = ({
   isOpen,
   onClose,
-  onToggle,
   syncStatus,
   onlineCount,
   totalOrdersCount,
   ready155Count,
   columnsCount,
+  officesCount = 4,
+  contractorsCount = 0,
+  trackedAuditCount = 0,
+  fullyAuditedCount = 0,
+  activeYear = new Date().getFullYear(),
   onManualSync,
   isManualSyncing,
   onOpenAddModal,
-  onOpenEditSelector,
-  onOpenEditBasicData,
-  onOpenImportModal,
-  onOpenCompatibleImport,
   onOpenSearchModal,
-  onOpenExportModal,
-  onOpenWeeklyReport,
-  onOpenOfficeComparison,
-  onOpenManageOffices,
-  onOpenManageContractors,
-  onOpenDropdownManagerWithAuth,
-  onOpenColumnManagerWithAuth,
-  onOpenClearDataModal,
-  onResetData,
-  deletedOrdersCount = 0,
-  onOpenRestoreDeletedModal,
-  onOpenNotificationSettings,
-  onOpenPermissionsManager,
-  onOpenContractorComparison,
-  onOpenSmartAudit,
-  onOpenDataRecovery,
-  onOpenAuditTrail,
   currentUser,
   onLogout,
-  isSoundMuted = false,
-  onToggleSound,
-  onOpenAboutPlatform,
+  activeSidebarSection = 'home',
+  onSelectSidebarSection
 }) => {
+  const normalizedActive = normalizeSidebarSectionId(activeSidebarSection);
+  const completionRate = totalOrdersCount > 0 ? Math.round((ready155Count / totalOrdersCount) * 100) : 0;
+
+  const handleSelectSection = (secId: SidebarSectionId) => {
+    onSelectSidebarSection?.(secId);
+  };
+
+  const getDynamicBadge = (secId: SidebarSectionId, fallback?: string): string | undefined => {
+    switch (secId) {
+      case 'home':
+        return 'الافتراضية';
+      case 'work_orders':
+        return `${totalOrdersCount}`;
+      case 'admin_dashboard':
+        return `${completionRate}%`;
+      case 'quality_ncr':
+        return '18 مرحلة';
+      case 'audit_trail':
+        return `${trackedAuditCount + fullyAuditedCount}`;
+      case 'regions_dashboard':
+        return `${officesCount} مكاتب`;
+      case 'contractors':
+        return contractorsCount > 0 ? `${contractorsCount}` : undefined;
+      case 'calendar':
+        return `${activeYear}`;
+      case 'settings':
+        return `${columnsCount} عمود`;
+      default:
+        return fallback;
+    }
+  };
+
   return (
     <>
-      {/* Backdrop overlay */}
+      {/* Mobile-only Backdrop overlay */}
       {isOpen && (
-        <div 
+        <div
           onClick={onClose}
-          className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-2xs transition-opacity duration-300"
+          className="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-2xs transition-opacity duration-300 lg:hidden"
           aria-hidden="true"
         />
       )}
 
-      {/* Full-Page-Height Adaptive Sidebar Column (بطول الصفحة وتكييفي مع الارتفاع) */}
+      {/* Vertically Fixed Right Corporate Sidebar (Does not scroll with content, slides in/out via top arrow toggle) */}
       <aside
-        className={`fixed top-0 right-0 h-screen max-h-screen w-80 max-w-[90vw] bg-white text-slate-800 border-l border-slate-200 shadow-2xl z-50 flex flex-col transition-transform duration-300 ease-in-out text-right font-['Cairo',sans-serif] ${
+        className={`fixed top-14 right-0 bottom-0 w-72 xl:w-76 max-w-[88vw] bg-[#002855] text-white border-l border-[#003B73] shadow-2xl z-40 flex flex-col shrink-0 transition-transform duration-300 ease-in-out text-right font-['Cairo',sans-serif] overflow-hidden ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
         dir="rtl"
-        aria-label="العمود الجانبي للعمليات"
+        aria-label="القائمة الجانبية المؤسسية"
       >
-        {/* Sidebar Header: Close Button and Title */}
-        <div className="bg-slate-50 p-4 flex items-center justify-between border-b border-slate-200 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-600 to-indigo-800 border border-emerald-500/40 flex items-center justify-center text-white shadow-xs">
-              <ShieldCheck className="w-4 h-4 text-amber-300" />
+        {/* Corporate Brand Header with Dedicated Collapse Arrow */}
+        <div className="bg-[#001D40] text-white px-4 py-3 flex items-center justify-between border-b border-blue-900/60 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#F58220] via-amber-500 to-[#004B8D] p-0.5 shadow-md flex items-center justify-center">
+              <div className="w-full h-full bg-[#002855] rounded-[10px] flex items-center justify-center">
+                <Zap className="w-4.5 h-4.5 text-[#F58220]" />
+              </div>
             </div>
             <div>
-              <div className="flex items-center gap-1.5">
-                <h2 className="text-xs sm:text-sm font-black text-slate-900 tracking-wide">
-                  حوكمة جودة اعمال الانشاءات
-                </h2>
-                <span className="px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 text-[9px] font-bold border border-blue-200">
-                  إجراء 155
-                </span>
+              <div className="text-xs font-black tracking-tight text-white leading-tight">
+                منظومة الحوكمة الإلكترونية
               </div>
-              <p className="text-[10px] text-slate-500 font-medium">
-                شريط العمليات وإدارة الأدوات المعتمدة
-              </p>
+              <div className="text-[11px] font-black text-[#F58220] leading-tight">
+                حوكمة الجودة • إجراء 155
+              </div>
             </div>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-250 transition-all cursor-pointer shadow-2xs"
-            title="إخفاء وطوي العمود الجانبي"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[#F58220] hover:text-amber-300 border border-white/15 transition-all cursor-pointer shadow-xs active:scale-95"
+            title="إخفاء القائمة الجانبية"
+            aria-label="إخفاء القائمة الجانبية"
           >
-            <span className="text-xs font-bold text-slate-700">طي</span>
-            <ChevronsRight className="w-4 h-4 text-slate-700 stroke-[3]" />
+            <ChevronsRight className="w-4 h-4 stroke-[2.5]" />
+            <span className="text-xs font-bold text-white hidden sm:inline">إخفاء</span>
           </button>
         </div>
 
-        {/* Real-Time Live Sync Status Banner */}
-        <div className="p-3 bg-slate-50/70 border-b border-slate-200 shrink-0">
-          <div className="bg-white rounded-xl p-2.5 border border-slate-200 shadow-2xs space-y-2">
+        {/* Real-Time Cloud Sync Status Banner */}
+        <div className="px-3 py-2 bg-[#001D40]/70 border-b border-blue-900/60 shrink-0">
+          <div className="bg-[#002855] rounded-xl p-2 border border-[#003B73] shadow-sm space-y-1.5">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-600 font-medium flex items-center gap-1.5 text-[11px]">
-                <Radio className={`w-3.5 h-3.5 ${syncStatus === 'connected' ? 'text-emerald-600 animate-pulse' : 'text-amber-500'}`} />
-                <span>المزامنة السحابية:</span>
+              <span className="text-blue-100 font-bold flex items-center gap-1.5 text-[11px]">
+                <Radio className={`w-3.5 h-3.5 ${syncStatus === 'connected' ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
+                <span>المزامنة السحابية الفورية</span>
               </span>
               <button
                 type="button"
                 onClick={onManualSync}
                 disabled={isManualSyncing}
-                className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 transition-colors cursor-pointer"
-                title="اضغط للتحديث الفوري"
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-[#F58220]/20 hover:bg-[#F58220]/30 text-[#F58220] border border-[#F58220]/40 transition-colors cursor-pointer"
+                title="تحديث فوري من الخزنة السحابية"
               >
                 <RefreshCw className={`w-3 h-3 ${isManualSyncing ? 'animate-spin' : ''}`} />
                 <span>{isManualSyncing ? 'جارٍ...' : 'تحديث'}</span>
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-1.5 pt-1 text-center">
-              <div className="bg-slate-50 p-1.5 rounded-lg border border-slate-200">
-                <span className="text-[10px] text-slate-500 block">المتصلون</span>
-                <span className="text-xs font-bold text-emerald-700 flex items-center justify-center gap-1 font-mono">
+            <div className="grid grid-cols-2 gap-1.5 text-center">
+              <div className="bg-[#001D40] p-1 rounded-lg border border-blue-900/40">
+                <span className="text-[9.5px] text-blue-200/80 block">المتصلون الآن</span>
+                <span className="text-xs font-bold text-emerald-400 flex items-center justify-center gap-1 font-mono tabular-nums">
                   <Users className="w-3 h-3" />
                   <span>{onlineCount}</span>
                 </span>
               </div>
-              <div className="bg-slate-50 p-1.5 rounded-lg border border-slate-200">
-                <span className="text-[10px] text-slate-500 block">إجمالي الأوامر</span>
-                <span className="text-xs font-bold text-blue-700 font-mono">
+              <div className="bg-[#001D40] p-1 rounded-lg border border-blue-900/40">
+                <span className="text-[9.5px] text-blue-200/80 block">إجمالي الأوامر</span>
+                <span className="text-xs font-bold text-[#FDB813] font-mono tabular-nums">
                   {totalOrdersCount}
                 </span>
               </div>
@@ -216,529 +329,113 @@ export const SidebarActions: React.FC<SidebarActionsProps> = ({
           </div>
         </div>
 
-        {/* Scrollable Adaptive Tool Groups (تكييفي مع ارتفاع الصفحة) */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-4 text-xs font-['Cairo',sans-serif]">
-          
-          {/* Featured Permissions & Accounts Icon in Sidebar (الصلاحيات - لمن لديه الصلاحيات كاملة فقط) */}
-          {onOpenPermissionsManager && hasFullPermissions(currentUser) && (
-            <div className="space-y-1.5 pb-2 border-b border-slate-800">
-              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider px-2 flex items-center justify-between">
-                <span>الحوكمة وإدارة الحسابات</span>
-                <KeyRound className="w-3 h-3 text-amber-400" />
-              </span>
-              <button
-                type="button"
-                onClick={onOpenPermissionsManager}
-                id="btn-sidebar-permissions"
-                className="w-full flex items-center gap-3 p-3 rounded-xl bg-gradient-to-r from-emerald-700 via-teal-700 to-emerald-800 hover:from-emerald-600 hover:to-teal-600 text-white font-black border border-emerald-400/40 shadow-lg transition-all cursor-pointer group"
-              >
-                <div className="w-9 h-9 rounded-xl bg-white/15 border border-white/25 flex items-center justify-center text-amber-300 shrink-0 group-hover:scale-105 transition-transform">
-                  <KeyRound className="w-5 h-5" />
-                </div>
-                <div className="text-right flex-1">
-                  <div className="font-black text-xs sm:text-sm text-white flex items-center justify-between">
-                    <span>الصلاحيات</span>
-                    <span className="text-[9px] bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded font-black">
-                      إدارة المستخدمين
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-emerald-100 mt-0.5">
-                    إنشاء حسابات بالإيميل وتخصيص الصلاحيات
-                  </div>
-                </div>
-              </button>
-            </div>
-          )}
-
-          {/* Group 1: Primary Field Actions */}
-          {(hasUserPermission(currentUser, 'addWorkOrder') || 
-            hasUserPermission(currentUser, 'editWorkOrderStatus') || 
-            hasUserPermission(currentUser, 'editWorkOrderBasic') || 
-            hasUserPermission(currentUser, 'importExcel') || 
-            hasUserPermission(currentUser, 'searchAndFilter') || 
-            hasUserPermission(currentUser, 'exportTable') || 
-            hasUserPermission(currentUser, 'viewWeeklyReport') || 
-            hasUserPermission(currentUser, 'viewOfficeComparison') || 
-            hasUserPermission(currentUser, 'viewContractorClosureReport')) && (
-            <div className="space-y-1.5">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-2">
-                العمليات الميدانية
-              </span>
-
-              {/* 1. Add New Work Order */}
-              {hasUserPermission(currentUser, 'addWorkOrder') && (
-                <button
-                  type="button"
-                  onClick={onOpenAddModal}
-                  id="btn-sidebar-add-order"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-800 font-bold border border-slate-200 shadow-2xs transition-all cursor-pointer group"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-blue-600 shrink-0 group-hover:scale-105 transition-transform">
-                    <PlusCircle className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900">إضافة أمر عمل جديد</div>
-                    <div className="text-[10px] text-slate-500">تسجيل وتوثيق أمر ميداني</div>
-                  </div>
-                </button>
-              )}
-
-
-
-              {/* 2. Edit Work Order Status */}
-              {hasUserPermission(currentUser, 'editWorkOrderStatus') && (
-                <button
-                  type="button"
-                  onClick={onOpenEditSelector}
-                  id="btn-sidebar-edit-order"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-amber-600 shrink-0">
-                    <Edit3 className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900">تحديث الحالة</div>
-                    <div className="text-[10px] text-slate-500">توثيق الصور، النماذج، وملاحظات الجودة</div>
-                  </div>
-                </button>
-              )}
-
-              {/* 2.1 Edit Basic Work Order Data */}
-              {onOpenEditBasicData && hasUserPermission(currentUser, 'editWorkOrderBasic') && (
-                <button
-                  type="button"
-                  onClick={onOpenEditBasicData}
-                  id="btn-sidebar-edit-basic-order"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-blue-600 shrink-0">
-                    <FileEdit className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900">تعديل بيانات أمر العمل</div>
-                    <div className="text-[10px] text-slate-500">المكتب، المقاول، رقم الأمر، الرمز</div>
-                  </div>
-                </button>
-              )}
-
-              {/* 2.2 Import from Excel */}
-              {onOpenImportModal && hasUserPermission(currentUser, 'importExcel') && (
-                <button
-                  type="button"
-                  onClick={onOpenImportModal}
-                  id="btn-sidebar-import-excel"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-emerald-600 shrink-0">
-                    <FileSpreadsheet className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900">استيراد من Excel</div>
-                    <div className="text-[10px] text-slate-500">إدراج فوري مع تحميل النموذج المعتمد</div>
-                  </div>
-                </button>
-              )}
-
-              {/* 3. Advanced Search & Filter */}
-              {hasUserPermission(currentUser, 'searchAndFilter') && (
-                <button
-                  type="button"
-                  onClick={onOpenSearchModal}
-                  id="btn-sidebar-search"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-indigo-600 shrink-0">
-                    <Search className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900">البحث والفلترة المتقدمة</div>
-                    <div className="text-[10px] text-slate-500">استعلام برقم الأمر أو المقاول</div>
-                  </div>
-                </button>
-              )}
-
-              {/* 4. Export Reports */}
-              {hasUserPermission(currentUser, 'exportTable') && (
-                <button
-                  type="button"
-                  onClick={onOpenExportModal}
-                  id="btn-sidebar-export"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-amber-600 shrink-0">
-                    <FileDown className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900">تصدير التقارير المعتمدة</div>
-                    <div className="text-[10px] text-slate-500">ملفات Excel ومحاضر PDF</div>
-                  </div>
-                </button>
-              )}
-
-              {/* 4.1 Weekly Administrative PDF Report */}
-              {onOpenWeeklyReport && hasUserPermission(currentUser, 'viewWeeklyReport') && (
-                <button
-                  type="button"
-                  onClick={onOpenWeeklyReport}
-                  id="btn-sidebar-weekly-report"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-blue-50/80 hover:bg-blue-100/90 text-blue-900 border border-blue-200 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-blue-100 border border-blue-200 flex items-center justify-center text-blue-700 shrink-0">
-                    <FileText className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
-                      <span>التقرير الأسبوعي الإداري</span>
-                      <span className="text-[9px] bg-blue-600 px-1.5 py-0.2 rounded text-white font-mono">PDF</span>
-                    </div>
-                    <div className="text-[10px] text-blue-800/80">إنجازات المكاتب للجهات الإدارية</div>
-                  </div>
-                </button>
-              )}
-
-              {/* 4.2 Sub-Offices Performance Benchmarking */}
-              {onOpenOfficeComparison && hasUserPermission(currentUser, 'viewOfficeComparison') && (
-                <button
-                  type="button"
-                  onClick={onOpenOfficeComparison}
-                  id="btn-sidebar-office-comparison"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-amber-50/80 hover:bg-amber-100/90 text-amber-900 border border-amber-250 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-amber-100 border border-amber-250 flex items-center justify-center text-amber-700 shrink-0">
-                    <Award className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
-                      <span>مقارنة أداء المكاتب</span>
-                      <span className="text-[9px] bg-amber-600 px-1.5 py-0.2 rounded text-white font-bold">تنافسي</span>
-                    </div>
-                    <div className="text-[10px] text-amber-800/80">ترتيب ونسب إنجاز إجراء 155</div>
-                  </div>
-                </button>
-              )}
-
-              {/* 4.3 Contractors Closure Comparison & Periodic Reports */}
-              {onOpenContractorComparison && hasUserPermission(currentUser, 'viewContractorClosureReport') && (
-                <button
-                  type="button"
-                  onClick={onOpenContractorComparison}
-                  id="btn-sidebar-contractor-comparison"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-emerald-50/80 hover:bg-emerald-100/90 text-emerald-900 border border-emerald-250 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-emerald-100 border border-emerald-250 flex items-center justify-center text-emerald-700 shrink-0">
-                    <Briefcase className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
-                      <span>مقارنة المقاولين وتقارير الإغلاق</span>
-                      <span className="text-[9px] bg-emerald-600 px-1.5 py-0.2 rounded text-white font-bold">دوري</span>
-                    </div>
-                    <div className="text-[10px] text-emerald-800/80">أسبوعي • شهري • ربع/نصف سنوي • سنوي</div>
-                  </div>
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Group 2: Administration & Customization */}
-          {(hasUserPermission(currentUser, 'manageOffices') || 
-            hasUserPermission(currentUser, 'manageContractors') || 
-            hasUserPermission(currentUser, 'manageDropdowns') || 
-            hasUserPermission(currentUser, 'manageColumns')) && (
-            <div className="space-y-1.5 pt-2 border-t border-slate-200">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-2 flex items-center justify-between">
-                <span>إدارة وتدقيق الهيكل</span>
-                <Lock className="w-3 h-3 text-slate-400" />
-              </span>
-
-              {/* 4.9 Manage Offices */}
-              {onOpenManageOffices && hasUserPermission(currentUser, 'manageOffices') && (
-                <button
-                  type="button"
-                  onClick={onOpenManageOffices}
-                  id="btn-sidebar-manage-offices"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-blue-600 shrink-0">
-                    <Building2 className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
-                      <span>إدارة وتعديل المكاتب</span>
-                      <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded font-mono border border-blue-200">تعديل/إضافة/حذف</span>
-                    </div>
-                    <div className="text-[10px] text-slate-500">تعديل المكاتب الفرعية ونقل الأوامر</div>
-                  </div>
-                </button>
-              )}
-
-              {/* 4.10 Manage Contractors Distribution */}
-              {onOpenManageContractors && hasUserPermission(currentUser, 'manageContractors') && (
-                <button
-                  type="button"
-                  onClick={onOpenManageContractors}
-                  id="btn-sidebar-manage-contractors"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-amber-600 shrink-0">
-                    <Briefcase className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
-                      <span>توزيع مقاولي المكاتب</span>
-                      <span className="text-[9px] bg-amber-50 text-amber-800 px-1.5 py-0.2 rounded font-bold border border-amber-200">معتمد ومتزامن</span>
-                    </div>
-                    <div className="text-[10px] text-slate-500">ربط المقاولين بالمكاتب وإضافة/حذف</div>
-                  </div>
-                </button>
-              )}
-
-              {/* 5. Dropdown Options Manager */}
-              {hasUserPermission(currentUser, 'manageDropdowns') && (
-                <button
-                  type="button"
-                  onClick={onOpenDropdownManagerWithAuth}
-                  id="btn-sidebar-dropdowns"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-purple-600 shrink-0">
-                    <ListOrdered className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900">إدارة القوائم المنسدلة</div>
-                    <div className="text-[10px] text-slate-500">تعديل وإضافة الخيارات (PIN)</div>
-                  </div>
-                </button>
-              )}
-
-              {/* 6. Columns Manager */}
-              {hasUserPermission(currentUser, 'manageColumns') && (
-                <button
-                  type="button"
-                  onClick={onOpenColumnManagerWithAuth}
-                  id="btn-sidebar-columns"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 transition-colors cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-sky-600 shrink-0">
-                    <Columns3 className="w-4 h-4" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-slate-900">إدارة مسميات الأعمدة</div>
-                    <div className="text-[10px] text-slate-500">ترتيب وتخصيص الأعمدة ({columnsCount})</div>
-                  </div>
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Group 3: Data Management & Reset */}
-          {(hasUserPermission(currentUser, 'clearData') || 
-            hasUserPermission(currentUser, 'restoreDeleted') || 
-            hasUserPermission(currentUser, 'manageNotifications') || 
-            hasFullPermissions(currentUser)) && (
-            <div className="space-y-1.5 pt-2 border-t border-slate-200">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-2">
-                الصيانة والصلاحيات والبيانات
-              </span>
-
-              {/* إدارة المستخدمين والصلاحيات (تظهر لمن لديه كامل الصلاحيات فقط) */}
-              {onOpenPermissionsManager && hasFullPermissions(currentUser) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenPermissionsManager();
-                  }}
-                  id="btn-sidebar-permissions"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-amber-50 hover:bg-amber-100/80 text-amber-900 border border-amber-300 transition-all cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 border border-amber-250 group-hover:scale-105 transition-transform">
-                    <KeyRound className="w-4 h-4 text-amber-700" />
-                  </div>
-                  <div className="text-right flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <span className="font-black text-xs text-amber-950">المستخدمون والصلاحيات</span>
-                      <span className="text-[9px] bg-amber-200/80 text-amber-900 px-1.5 py-0.2 rounded font-bold border border-amber-300">صلاحية كاملة</span>
-                    </div>
-                    <div className="text-[10px] text-amber-800 truncate">
-                      إدارة حسابات المستفيدين والأدوار والتحكم الكامل
-                    </div>
-                  </div>
-                </button>
-              )}
-
-              {/* 7. Clear All Data */}
-              {hasUserPermission(currentUser, 'clearData') && (
-                <button
-                  type="button"
-                  onClick={onOpenClearDataModal}
-                  id="btn-sidebar-clear"
-                  className="w-full flex items-center gap-3 p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 transition-colors cursor-pointer shadow-2xs"
-                >
-                  <div className="w-7 h-7 rounded-lg bg-rose-100 flex items-center justify-center text-rose-700 shrink-0 border border-rose-200">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-rose-900">تفريغ البيانات جذرياً</div>
-                    <div className="text-[10px] text-rose-700/80">حذف كافة الأوامر الميدانية</div>
-                  </div>
-                </button>
-              )}
-
-              {/* Restore Deleted Orders (Trash Bin) permanently disabled */}
-
-              {/* 7.5 Immutable Audit Trail Viewer (سجل التدقيق التاريخي الشامل - للاستعراض فقط) */}
-              {onOpenAuditTrail && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenAuditTrail();
-                  }}
-                  id="btn-sidebar-audit-trail"
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100/80 text-emerald-900 border border-emerald-250 transition-all cursor-pointer group shadow-2xs"
-                >
-                  <div className="w-7 h-7 rounded-lg bg-emerald-100 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
-                    <History className="w-3.5 h-3.5" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-black text-xs text-slate-900">سجل التدقيق الشامل (Audit Trail)</span>
-                      <Lock className="w-3 h-3 text-emerald-700" />
-                    </div>
-                    <div className="text-[10px] text-emerald-800">
-                      توثيق جميع العمليات النهائية (للاستعراض فقط)
-                    </div>
-                  </div>
-                </button>
-              )}
-
-              {/* 7.6 Data Recovery & Cloud Vault */}
-              {onOpenDataRecovery && hasUserPermission(currentUser, 'restoreDeleted') && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenDataRecovery();
-                  }}
-                  id="btn-sidebar-data-recovery"
-                  className="w-full flex items-center gap-3 p-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 transition-colors cursor-pointer shadow-2xs"
-                >
-                  <div className="w-7 h-7 rounded-lg bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-700 shrink-0">
-                    <FolderSync className="w-3.5 h-3.5" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-xs text-indigo-900">مركز الأمان والنسخ الاحتياطية</span>
-                      <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                    </div>
-                    <div className="text-[10px] text-indigo-700">
-                      استرجاع وحفظ النسخ السحابية التلقائية
-                    </div>
-                  </div>
-                </button>
-              )}
-
-              {/* 8. Reset Sample Data */}
-              {hasUserPermission(currentUser, 'clearData') && (
-                <button
-                  type="button"
-                  onClick={onResetData}
-                  id="btn-sidebar-reset"
-                  className="w-full flex items-center gap-3 p-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors cursor-pointer shadow-2xs"
-                >
-                  <div className="w-7 h-7 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 shrink-0">
-                    <RotateCcw className="w-3.5 h-3.5" />
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-xs text-slate-800">استعادة البيانات النموذجية</span>
-                      <Lock className="w-3 h-3 text-slate-400" />
-                    </div>
-                    <div className="text-[10px] text-slate-500">إعادة ضبط الأوامر (محمي برمز الأمان)</div>
-                  </div>
-                </button>
-              )}
-
-              {/* 8.5 Background Push Notifications Center Button */}
-              {onOpenNotificationSettings && (hasUserPermission(currentUser, 'manageNotifications') || Boolean(currentUser?.isSuperAdmin)) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenNotificationSettings();
-                  }}
-                  id="btn-sidebar-notifications"
-                  className="w-full flex items-center gap-3 p-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-250 transition-colors cursor-pointer shadow-2xs"
-                >
-                  <div className="w-7 h-7 rounded-lg bg-amber-100 border border-amber-200 text-amber-700 flex items-center justify-center shrink-0 relative">
-                    <BellRing className="w-3.5 h-3.5" />
-                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500"></span>
-                  </div>
-                  <div className="text-right flex-1">
-                    <div className="font-bold text-xs text-amber-900">مركز الإشعارات الفورية</div>
-                    <div className="text-[10px] text-amber-800">إشعارات التحديث وإرسال تنبيه جماعي</div>
-                  </div>
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Group 4: Device & Environment */}
-          <div className="space-y-1.5 pt-2 border-t border-slate-200">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-2">
-              الجهاز والتفضيلات
+        {/* Scrollable Unified Platform Classifications Tabs */}
+        <div className="flex-1 overflow-y-auto px-2.5 py-2.5 space-y-1 text-xs font-['Cairo',sans-serif]">
+          <div className="px-2 pb-1 flex items-center justify-between">
+            <span className="text-[10px] font-black text-blue-200/80 uppercase tracking-wider">
+              تصنيفات وتبويبات المنصة المعتمدة
             </span>
-
-            {/* 9. Sound Notification Toggle */}
-            {onToggleSound && (
-              <button
-                type="button"
-                onClick={onToggleSound}
-                id="btn-sidebar-sound"
-                className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors cursor-pointer shadow-2xs ${
-                  !isSoundMuted 
-                    ? 'bg-blue-50 hover:bg-blue-100 text-blue-900 border-blue-200' 
-                    : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
-                }`}
-              >
-                <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                  !isSoundMuted ? 'bg-blue-100 text-blue-700 border border-blue-200' : 'bg-slate-100 text-slate-500 border border-slate-200'
-                }`}>
-                  {!isSoundMuted ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-                </div>
-                <div className="text-right flex-1">
-                  <div className="font-bold text-xs text-slate-900">
-                    {!isSoundMuted ? 'التنبيهات الصوتية: نشطة' : 'التنبيهات الصوتية: صامتة'}
-                  </div>
-                  <div className="text-[10px] text-slate-500">
-                    {!isSoundMuted ? 'صوت تنبيه فوري عند كل إجراء' : 'انقر للتفعيل وسماع التنبيهات'}
-                  </div>
-                </div>
-              </button>
-            )}
-
+            <span className="text-[9.5px] font-mono text-[#FDB813] font-bold">
+              {SIDEBAR_SECTIONS_META.length} أقسام
+            </span>
           </div>
 
+          {SIDEBAR_SECTIONS_META.map((sec) => {
+            const IconComp = sec.icon;
+            const isActive = normalizedActive === sec.id;
+            const badgeText = getDynamicBadge(sec.id, sec.badge);
+            const isTabPermitted = canAccessSidebarSection(currentUser, sec.id);
+            return (
+              <button
+                key={sec.id}
+                type="button"
+                onClick={() => handleSelectSection(sec.id)}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl transition-all cursor-pointer text-right group ${
+                  isActive
+                    ? 'bg-gradient-to-l from-[#F58220] to-[#d96b12] text-white shadow-md ring-1 ring-amber-300/60'
+                    : isTabPermitted
+                    ? 'text-blue-100 hover:bg-white/10 border border-transparent hover:border-white/10'
+                    : 'text-blue-300/50 hover:bg-rose-950/30 border border-transparent hover:border-rose-500/30 opacity-75'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+                      isActive
+                        ? 'bg-[#002855]/30 text-white'
+                        : isTabPermitted
+                        ? 'bg-[#001D40] border border-blue-800/60 group-hover:border-blue-700'
+                        : 'bg-[#001D40]/60 border border-rose-800/40'
+                    }`}
+                  >
+                    <IconComp className={`w-3.5 h-3.5 ${isActive ? 'text-white' : isTabPermitted ? sec.iconColorClass : 'text-rose-300/70'}`} />
+                  </div>
+                  <div className="min-w-0 leading-tight">
+                    <div className={`text-[11.5px] truncate flex items-center gap-1 ${isActive ? 'font-black text-white' : 'font-bold text-blue-50'}`}>
+                      <span className="truncate">{sec.label}</span>
+                      {!isTabPermitted && <Lock className="w-3 h-3 text-rose-400 shrink-0" />}
+                    </div>
+                    <div className={`text-[9.5px] truncate mt-0.5 ${isActive ? 'text-amber-100 font-bold' : 'text-blue-300/75'}`}>
+                      {sec.subtitle}
+                    </div>
+                  </div>
+                </div>
+                {badgeText && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded-md text-[9.5px] font-mono font-black shrink-0 ${
+                      isActive
+                        ? 'bg-[#002855] text-[#FDB813]'
+                        : 'bg-[#001D40] text-blue-200 border border-blue-800/60'
+                    }`}
+                  >
+                    {badgeText}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Sidebar Footer: Current Logged-In User, Logout & Summary */}
-        <div className="p-3 bg-slate-50 border-t border-slate-200 shrink-0 space-y-2.5">
+        {/* Compact Quick Action Bar (Zero Duplication with Tabs) */}
+        <div className="px-3 py-2 bg-[#001D40]/90 border-t border-blue-900/60 grid grid-cols-2 gap-1.5 shrink-0">
+          {hasUserPermission(currentUser, 'addWorkOrder') && (
+            <button
+              type="button"
+              onClick={onOpenAddModal}
+              id="btn-sidebar-add-order"
+              className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-[#F58220] hover:bg-[#d96b12] text-white font-black text-[11px] transition-all cursor-pointer shadow-xs"
+            >
+              <PlusCircle className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">إضافة أمر عمل</span>
+            </button>
+          )}
+          {hasUserPermission(currentUser, 'searchAndFilter') && (
+            <button
+              type="button"
+              onClick={onOpenSearchModal}
+              id="btn-sidebar-search"
+              className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-[#002855] hover:bg-[#003B73] text-blue-100 border border-blue-800 font-bold text-[11px] transition-all cursor-pointer"
+            >
+              <Search className="w-3.5 h-3.5 text-[#FDB813] shrink-0" />
+              <span className="truncate">بحث شامل</span>
+            </button>
+          )}
+        </div>
+
+        {/* Sidebar Footer: Current User & Compliance Summary */}
+        <div className="p-2.5 bg-[#001D40] border-t border-blue-900/60 shrink-0 space-y-1.5">
           {currentUser && (
-            <div className="bg-white rounded-xl p-2.5 border border-slate-200 flex items-center justify-between gap-2 shadow-2xs">
+            <div className="bg-[#002855] rounded-xl p-2 border border-[#003B73] flex items-center justify-between gap-2 shadow-2xs">
               <div className="flex items-center gap-2 min-w-0">
-                <div className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+                <div className="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center shrink-0">
                   <UserCheck className="w-3.5 h-3.5" />
                 </div>
-                <div className="min-w-0 text-right">
-                  <div className="text-[11px] font-black text-slate-900 truncate">
+                <div className="min-w-0 text-right leading-tight">
+                  <div className="text-[11px] font-black text-white truncate">
                     {currentUser.displayName || currentUser.username}
                   </div>
-                  <div className="text-[10px] text-emerald-700 font-bold truncate">
+                  <div className="text-[9.5px] text-[#F58220] font-bold truncate">
                     {currentUser.roleTitle || 'مستخدم معتمد'}
-                  </div>
-                  <div className="text-[9px] text-slate-500 font-mono truncate">
-                    User: {currentUser.username}
                   </div>
                 </div>
               </div>
@@ -746,8 +443,8 @@ export const SidebarActions: React.FC<SidebarActionsProps> = ({
                 <button
                   type="button"
                   onClick={onLogout}
-                  className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-250 text-[10px] font-black flex items-center gap-1 transition-colors cursor-pointer shrink-0 shadow-2xs"
-                  title="تسجيل الخروج من المنصة"
+                  className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-400/30 text-[10px] font-black flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                  title="تسجيل الخروج"
                 >
                   <LogOut className="w-3 h-3" />
                   <span>خروج</span>
@@ -756,17 +453,16 @@ export const SidebarActions: React.FC<SidebarActionsProps> = ({
             </div>
           )}
 
-          <div className="flex items-center justify-between text-[11px] text-slate-600">
+          <div className="flex items-center justify-between text-[10px] text-blue-200 px-1">
             <span>مؤهل 155:</span>
-            <span className="font-bold text-emerald-700 font-mono">{ready155Count} أمر</span>
-            <span className="text-slate-300">|</span>
-            <span>الامتثال:</span>
-            <span className="font-bold text-blue-700 font-mono">
-              {totalOrdersCount > 0 ? Math.round((ready155Count / totalOrdersCount) * 100) : 0}%
+            <span className="font-bold text-emerald-400 font-mono tabular-nums">{ready155Count} أمر</span>
+            <span className="text-blue-400/50">|</span>
+            <span>نسبة الامتثال:</span>
+            <span className="font-bold text-[#FDB813] font-mono tabular-nums">
+              {completionRate}%
             </span>
           </div>
         </div>
-
       </aside>
     </>
   );

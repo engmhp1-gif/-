@@ -46,7 +46,7 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
   const [scheduleStatus, setScheduleStatus] = useState<any | null>(null);
   const [readOnlyInventory, setReadOnlyInventory] = useState<any | null>(null);
   const [newSnapshotLabel, setNewSnapshotLabel] = useState('');
-  const [activeTab, setActiveTab] = useState<'scheduled_backup' | 'snapshots' | 'server' | 'export_import'>('scheduled_backup');
+  const [activeTab, setActiveTab] = useState<'export_import' | 'server' | 'scheduled_backup' | 'snapshots'>('export_import');
   const [isLoading, setIsLoading] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -62,12 +62,6 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
       'x-realtime-client-id': realtime.getClientId()
     };
     const baseHeaders = getAuthHeaders(extra);
-    const currentUser = getSavedCurrentUser();
-    const existingToken = getSavedSessionToken();
-
-    if (!existingToken && !currentUser) {
-      throw new Error('غير مصرح: يرجى تسجيل الدخول أولاً.');
-    }
 
     try {
       const verifyRes = await fetch('/api/auth/session-verify', {
@@ -146,6 +140,215 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
     }
   };
 
+  const extractZipEntriesBrowser = async (
+    rawBytes: Uint8Array
+  ): Promise<{ isXlsx: boolean; entries: Array<{ fileName: string; data: Uint8Array }> }> => {
+    const view = new DataView(rawBytes.buffer, rawBytes.byteOffset, rawBytes.byteLength);
+    const entriesMeta: Array<{
+      fileName: string;
+      compressionMethod: number;
+      compressedSize: number;
+      localHeaderOffset: number;
+    }> = [];
+
+    // 1. Locate End of Central Directory (EOCD: 0x06054b50) from the end of the buffer
+    let eocdOffset = -1;
+    const minEocdSearch = Math.max(0, rawBytes.length - 65557);
+    for (let i = rawBytes.length - 22; i >= minEocdSearch; i--) {
+      if (view.getUint32(i, true) === 0x06054b50) {
+        eocdOffset = i;
+        break;
+      }
+    }
+
+    if (eocdOffset !== -1) {
+      const cdOffset = view.getUint32(eocdOffset + 16, true);
+      const cdSize = view.getUint32(eocdOffset + 12, true);
+      let pos = cdOffset;
+      while (pos + 46 <= rawBytes.length && pos < cdOffset + cdSize) {
+        if (view.getUint32(pos, true) !== 0x02014b50) break;
+        const compressionMethod = view.getUint16(pos + 10, true);
+        const compressedSize = view.getUint32(pos + 20, true);
+        const fileNameLen = view.getUint16(pos + 28, true);
+        const extraLen = view.getUint16(pos + 30, true);
+        const commentLen = view.getUint16(pos + 32, true);
+        const localHeaderOffset = view.getUint32(pos + 42, true);
+        const fileNameBytes = rawBytes.subarray(pos + 46, pos + 46 + fileNameLen);
+        const fileName = new TextDecoder('utf-8', { fatal: false }).decode(fileNameBytes);
+        entriesMeta.push({ fileName, compressionMethod, compressedSize, localHeaderOffset });
+        pos += 46 + fileNameLen + extraLen + commentLen;
+      }
+    }
+
+    // 2. Fallback to Local File Headers (0x04034b50) if Central Directory was not found
+    if (entriesMeta.length === 0) {
+      let offset = 0;
+      while (offset + 30 <= rawBytes.length) {
+        if (view.getUint32(offset, true) !== 0x04034b50) {
+          offset++;
+          continue;
+        }
+        const compressionMethod = view.getUint16(offset + 8, true);
+        const compressedSize = view.getUint32(offset + 18, true);
+        const fileNameLen = view.getUint16(offset + 26, true);
+        const extraLen = view.getUint16(offset + 28, true);
+        const fileNameBytes = rawBytes.subarray(offset + 30, offset + 30 + fileNameLen);
+        const fileName = new TextDecoder('utf-8', { fatal: false }).decode(fileNameBytes);
+        entriesMeta.push({ fileName, compressionMethod, compressedSize, localHeaderOffset: offset });
+        const dataStart = offset + 30 + fileNameLen + extraLen;
+        offset = compressedSize > 0 && dataStart + compressedSize <= rawBytes.length
+          ? dataStart + compressedSize
+          : dataStart + 1;
+      }
+    }
+
+    // Detect if this ZIP is actually an Excel (.xlsx) OpenXML package
+    const isXlsx = entriesMeta.some(
+      (e) =>
+        e.fileName === '[Content_Types].xml' ||
+        e.fileName.startsWith('xl/') ||
+        e.fileName.startsWith(' _rels/') ||
+        e.fileName.endsWith('.xml.rels')
+    );
+    if (isXlsx) {
+      return { isXlsx: true, entries: [] };
+    }
+
+    const extracted: Array<{ fileName: string; data: Uint8Array }> = [];
+    for (let idx = 0; idx < entriesMeta.length; idx++) {
+      const meta = entriesMeta[idx];
+      if (!meta.fileName || meta.fileName.endsWith('/') || meta.fileName.includes('__MACOSX')) continue;
+      const lhOffset = meta.localHeaderOffset;
+      if (lhOffset + 30 > rawBytes.length || view.getUint32(lhOffset, true) !== 0x04034b50) continue;
+      const localNameLen = view.getUint16(lhOffset + 26, true);
+      const localExtraLen = view.getUint16(lhOffset + 28, true);
+      const dataStart = lhOffset + 30 + localNameLen + localExtraLen;
+      if (dataStart >= rawBytes.length) continue;
+
+      const nextHeaderOffset = idx + 1 < entriesMeta.length ? entriesMeta[idx + 1].localHeaderOffset : (eocdOffset !== -1 ? view.getUint32(eocdOffset + 16, true) : rawBytes.length);
+      const compLen = meta.compressedSize > 0 && dataStart + meta.compressedSize <= rawBytes.length
+        ? meta.compressedSize
+        : Math.max(0, nextHeaderOffset - dataStart);
+
+      if (compLen <= 0) continue;
+      const rawEntry = rawBytes.subarray(dataStart, dataStart + compLen);
+      let fileBytes: Uint8Array | null = null;
+      if (meta.compressionMethod === 0) {
+        fileBytes = rawEntry;
+      } else if (meta.compressionMethod === 8) {
+        fileBytes = await tryDecompressBrowserStream(rawEntry, 'deflate-raw');
+      }
+
+      if (fileBytes && fileBytes.length > 0) {
+        // If the inner file inside the ZIP is itself GZIP compressed (.gz), decompress it too
+        const isInnerGz =
+          (fileBytes.length >= 2 && fileBytes[0] === 0x1f && fileBytes[1] === 0x8b) ||
+          meta.fileName.toLowerCase().endsWith('.gz');
+        if (isInnerGz) {
+          const innerGunzipped = await tryDecompressBrowserStream(fileBytes, 'gzip');
+          if (innerGunzipped && innerGunzipped.length > 0) {
+            fileBytes = innerGunzipped;
+          }
+        }
+        extracted.push({ fileName: meta.fileName, data: fileBytes });
+      }
+    }
+
+    return { isXlsx: false, entries: extracted };
+  };
+
+  const resolveBlobReferencesInPayload = (obj: any, blobMap: Map<string, string>): any => {
+    if (!blobMap || blobMap.size === 0 || !obj) return obj;
+    if (typeof obj === 'string') {
+      if (obj.startsWith('__VAULT_BLOB_REF__:')) {
+        const hash = obj.slice('__VAULT_BLOB_REF__:'.length).trim();
+        return blobMap.get(hash) || obj;
+      }
+      return obj;
+    }
+    if (Array.isArray(obj)) {
+      return obj.map((item) => resolveBlobReferencesInPayload(item, blobMap));
+    }
+    if (typeof obj === 'object') {
+      const out: any = {};
+      for (const [k, v] of Object.entries(obj)) {
+        out[k] = resolveBlobReferencesInPayload(v, blobMap);
+      }
+      return out;
+    }
+    return obj;
+  };
+
+  const parseExcelBytesUniversal = (byteArr: Uint8Array): any | null => {
+    try {
+      const wb = XLSX.read(byteArr, { type: 'array', cellDates: true });
+      if (!wb || !Array.isArray(wb.SheetNames) || wb.SheetNames.length === 0) return null;
+
+      const collectedOrders: any[] = [];
+      const collectedTables: any[] = [];
+      const collectedUsers: any[] = [];
+      const collectedOffices: any[] = [];
+      const discoveredCustomCols = new Map<string, { id: string; label: string; visible: boolean }>();
+
+      for (const sheetName of wb.SheetNames) {
+        const sheet = wb.Sheets[sheetName];
+        if (!sheet) continue;
+        const rawRows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: '' });
+        if (!Array.isArray(rawRows) || rawRows.length <= 1) continue;
+
+        const mapping = detectUniversalColumns(rawRows);
+
+        const extracted = extractOrdersFromRawRows(
+          rawRows,
+          mapping.headerRowIndex + 1,
+          mapping.mappedColumns,
+          { sheetName }
+        );
+        if (Array.isArray(extracted?.validOrders) && extracted.validOrders.length > 0) {
+          collectedOrders.push(...extracted.validOrders);
+          continue;
+        }
+
+        // Check if this sheet is a structured table of users, monthTables, or offices
+        const jsonObjects = XLSX.utils.sheet_to_json<any>(sheet, { defval: '' });
+        if (Array.isArray(jsonObjects) && jsonObjects.length > 0) {
+          const envSheet = extractBackupEnvelope(jsonObjects);
+          if (envSheet.format !== 'invalid' && envSheet.payload) {
+            if (Array.isArray(envSheet.payload.workOrders)) collectedOrders.push(...envSheet.payload.workOrders);
+            if (Array.isArray(envSheet.payload.monthTables)) collectedTables.push(...envSheet.payload.monthTables);
+            if (Array.isArray(envSheet.payload.users)) collectedUsers.push(...envSheet.payload.users);
+            if (Array.isArray(envSheet.payload.offices)) collectedOffices.push(...envSheet.payload.offices);
+            continue;
+          }
+        }
+
+        const env2d = extractBackupEnvelope(rawRows);
+        if (env2d.format !== 'invalid' && env2d.payload) {
+          if (Array.isArray(env2d.payload.workOrders)) collectedOrders.push(...env2d.payload.workOrders);
+          if (Array.isArray(env2d.payload.monthTables)) collectedTables.push(...env2d.payload.monthTables);
+          if (Array.isArray(env2d.payload.users)) collectedUsers.push(...env2d.payload.users);
+          if (Array.isArray(env2d.payload.offices)) collectedOffices.push(...env2d.payload.offices);
+        }
+      }
+
+      if (
+        collectedOrders.length > 0 ||
+        collectedTables.length > 0 ||
+        collectedUsers.length > 0 ||
+        collectedOffices.length > 0
+      ) {
+        const resultPayload: any = {
+          workOrders: collectedOrders
+        };
+        if (collectedTables.length > 0) resultPayload.monthTables = collectedTables;
+        if (collectedUsers.length > 0) resultPayload.users = collectedUsers;
+        if (collectedOffices.length > 0) resultPayload.offices = collectedOffices;
+        return resultPayload;
+      }
+    } catch {}
+    return null;
+  };
+
   const decodeSingleFileUniversal = async (file: File): Promise<any> => {
     const arrayBuffer = await file.arrayBuffer();
     const rawBytes = new Uint8Array(arrayBuffer);
@@ -153,11 +356,113 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
       throw new Error(`الملف (${file.name}) فارغ تماماً (0 بايت)`);
     }
 
+    const lowerName = file.name.toLowerCase();
+    const isPkZipHeader =
+      rawBytes.length >= 4 &&
+      rawBytes[0] === 0x50 &&
+      rawBytes[1] === 0x4b &&
+      rawBytes[2] === 0x03 &&
+      rawBytes[3] === 0x04;
+
+    // 0. If file has PK\x03\x04 header (.zip or .xlsx), inspect whether it is an Excel workbook or a ZIP archive
+    if (isPkZipHeader) {
+      if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls') || lowerName.endsWith('.xlsm')) {
+        const excelParsed = parseExcelBytesUniversal(rawBytes);
+        if (excelParsed) return excelParsed;
+      }
+
+      const zipInfo = await extractZipEntriesBrowser(rawBytes);
+      if (zipInfo.isXlsx) {
+        const excelParsed = parseExcelBytesUniversal(rawBytes);
+        if (excelParsed) return excelParsed;
+      } else if (zipInfo.entries.length > 0) {
+        const combinedZipPayload: any = {
+          workOrders: [],
+          monthTables: [],
+          users: [],
+          offices: [],
+          columns: [],
+          archivedReports: [],
+          deletedOrderIds: []
+        };
+        const blobMap = new Map<string, string>();
+
+        // First pass: collect any blob_<hash>.gz attachments inside the ZIP
+        for (const entry of zipInfo.entries) {
+          const baseName = entry.fileName.split('/').pop() || entry.fileName;
+          const blobMatch = baseName.match(/^blob_([a-f0-9]+)(?:\.gz|\.txt|\.json)?$/i);
+          if (blobMatch) {
+            const hash = blobMatch[1];
+            const blobText = new TextDecoder('utf-8', { fatal: false }).decode(entry.data).trim();
+            if (blobText) blobMap.set(hash, blobText);
+          }
+        }
+
+        // Second pass: decode every JSON / Excel / CSV entry inside the ZIP
+        for (const entry of zipInfo.entries) {
+          const baseName = entry.fileName.split('/').pop() || entry.fileName;
+          if (/^blob_[a-f0-9]+/i.test(baseName)) continue;
+
+          let entryHandled = false;
+          const encodings = ['utf-8', 'utf-16le', 'windows-1256'];
+          for (const enc of encodings) {
+            try {
+              const text = new TextDecoder(enc, { fatal: false }).decode(entry.data);
+              const parsed = tryParseFlexibleJsonString(text);
+              if (parsed && typeof parsed === 'object') {
+                const env = extractBackupEnvelope(parsed);
+                if (env.format !== 'invalid' && env.payload) {
+                  if (Array.isArray(env.payload.workOrders)) combinedZipPayload.workOrders.push(...env.payload.workOrders);
+                  if (Array.isArray(env.payload.monthTables)) combinedZipPayload.monthTables.push(...env.payload.monthTables);
+                  if (Array.isArray(env.payload.users)) combinedZipPayload.users.push(...env.payload.users);
+                  if (Array.isArray(env.payload.offices)) combinedZipPayload.offices.push(...env.payload.offices);
+                  if (Array.isArray(env.payload.columns) && env.payload.columns.length > 0) {
+                    combinedZipPayload.columns = env.payload.columns;
+                  }
+                  if (env.payload.dropdownOptions && !combinedZipPayload.dropdownOptions) {
+                    combinedZipPayload.dropdownOptions = env.payload.dropdownOptions;
+                  }
+                  if (Array.isArray(env.payload.archivedReports)) {
+                    combinedZipPayload.archivedReports.push(...env.payload.archivedReports);
+                  }
+                  entryHandled = true;
+                  break;
+                }
+              }
+            } catch {}
+          }
+
+          if (!entryHandled) {
+            const excelFromZip = parseExcelBytesUniversal(entry.data);
+            if (excelFromZip) {
+              if (Array.isArray(excelFromZip.workOrders)) combinedZipPayload.workOrders.push(...excelFromZip.workOrders);
+              if (Array.isArray(excelFromZip.monthTables)) combinedZipPayload.monthTables.push(...excelFromZip.monthTables);
+              if (Array.isArray(excelFromZip.users)) combinedZipPayload.users.push(...excelFromZip.users);
+              if (Array.isArray(excelFromZip.offices)) combinedZipPayload.offices.push(...excelFromZip.offices);
+              if (Array.isArray(excelFromZip.columns) && combinedZipPayload.columns.length === 0) {
+                combinedZipPayload.columns = excelFromZip.columns;
+              }
+            }
+          }
+        }
+
+        const resolvedZipPayload = resolveBlobReferencesInPayload(combinedZipPayload, blobMap);
+        if (
+          resolvedZipPayload.workOrders.length > 0 ||
+          resolvedZipPayload.monthTables.length > 0 ||
+          resolvedZipPayload.users.length > 0 ||
+          resolvedZipPayload.offices.length > 0
+        ) {
+          return resolvedZipPayload;
+        }
+      }
+    }
+
     const candidateByteArrays: Uint8Array[] = [rawBytes];
 
     // 1. Check GZIP magic header (0x1f 0x8b) or .gz extension
     const isGzipHeader = rawBytes.length >= 2 && rawBytes[0] === 0x1f && rawBytes[1] === 0x8b;
-    if (isGzipHeader || file.name.toLowerCase().endsWith('.gz')) {
+    if (isGzipHeader || lowerName.endsWith('.gz')) {
       const gunzipped = await tryDecompressBrowserStream(rawBytes, 'gzip');
       if (gunzipped && gunzipped.length > 0) {
         candidateByteArrays.unshift(gunzipped);
@@ -213,36 +518,8 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
 
     // 4. Try parsing as Excel / CSV (.xlsx, .xls, .csv) via SheetJS in browser
     for (const byteArr of candidateByteArrays) {
-      try {
-        const wb = XLSX.read(byteArr, { type: 'array', cellDates: true });
-        if (wb && Array.isArray(wb.SheetNames) && wb.SheetNames.length > 0) {
-          const collectedOrders: any[] = [];
-          for (const sheetName of wb.SheetNames) {
-            const sheet = wb.Sheets[sheetName];
-            if (!sheet) continue;
-            const rawRows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: '' });
-            if (Array.isArray(rawRows) && rawRows.length > 1) {
-              const mapping = detectUniversalColumns(rawRows);
-              const extracted = extractOrdersFromRawRows(
-                rawRows,
-                mapping.headerRowIndex + 1,
-                mapping.mappedColumns
-              );
-              if (Array.isArray(extracted?.validOrders) && extracted.validOrders.length > 0) {
-                collectedOrders.push(...extracted.validOrders);
-              } else {
-                const env2d = extractBackupEnvelope(rawRows);
-                if (env2d.format !== 'invalid' && Array.isArray(env2d.payload?.workOrders)) {
-                  collectedOrders.push(...env2d.payload.workOrders);
-                }
-              }
-            }
-          }
-          if (collectedOrders.length > 0) {
-            return { workOrders: collectedOrders };
-          }
-        }
-      } catch {}
+      const excelParsed = parseExcelBytesUniversal(byteArr);
+      if (excelParsed) return excelParsed;
     }
 
     // 5. Fallback to Server Universal Binary/Compressed/ZIP Decoder (/api/backup/decode-raw-file)
@@ -282,7 +559,7 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
       return { payload: singlePayload, label: files[0].name };
     }
 
-    // Merge multiple selected files (e.g. core_db.json.gz + blob_*.gz chunks or multiple JSON files)
+    // Merge multiple selected files (e.g. core_db.json.gz + orders_chunk_*.json.gz + blob_*.gz or multiple JSON/Excel files)
     const combined: any = {
       workOrders: [],
       monthTables: [],
@@ -292,8 +569,31 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
       archivedReports: [],
       deletedOrderIds: []
     };
+    const blobMap = new Map<string, string>();
     const decodedNames: string[] = [];
+
+    // First pass: check for any blob_<hash>.gz files among the selected files
     for (const f of files) {
+      const blobMatch = f.name.match(/^blob_([a-f0-9]+)(?:\.gz|\.txt|\.json)?$/i);
+      if (blobMatch) {
+        try {
+          const ab = await f.arrayBuffer();
+          let bytes = new Uint8Array(ab);
+          if ((bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) || f.name.toLowerCase().endsWith('.gz')) {
+            const decomp = await tryDecompressBrowserStream(bytes, 'gzip');
+            if (decomp) bytes = decomp;
+          }
+          const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes).trim();
+          if (text) {
+            blobMap.set(blobMatch[1], text);
+            decodedNames.push(f.name);
+          }
+        } catch {}
+      }
+    }
+
+    for (const f of files) {
+      if (/^blob_[a-f0-9]+/i.test(f.name)) continue;
       try {
         const part = await decodeSingleFileUniversal(f);
         if (part && typeof part === 'object') {
@@ -302,25 +602,35 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
           if (Array.isArray(part.monthTables)) combined.monthTables.push(...part.monthTables);
           if (Array.isArray(part.users)) combined.users.push(...part.users);
           if (Array.isArray(part.offices)) combined.offices.push(...part.offices);
-          if (Array.isArray(part.columns) && combined.columns.length === 0) combined.columns = part.columns;
-          if (part.dropdownOptions && !combined.dropdownOptions) combined.dropdownOptions = part.dropdownOptions;
+          if (Array.isArray(part.columns) && part.columns.length > 0) {
+            const colMap = new Map<string, any>();
+            combined.columns.forEach((c: any) => { if (c?.id) colMap.set(c.id, c); });
+            part.columns.forEach((c: any) => { if (c?.id) colMap.set(c.id, c); });
+            combined.columns = Array.from(colMap.values());
+          }
+          if (part.dropdownOptions) {
+            combined.dropdownOptions = { ...(combined.dropdownOptions || {}), ...part.dropdownOptions };
+          }
           if (Array.isArray(part.archivedReports)) combined.archivedReports.push(...part.archivedReports);
           if (Array.isArray(part.deletedOrderIds)) combined.deletedOrderIds.push(...part.deletedOrderIds);
         }
       } catch {}
     }
 
+    const resolvedCombined = resolveBlobReferencesInPayload(combined, blobMap);
+
     if (
-      combined.workOrders.length === 0 &&
-      combined.monthTables.length === 0 &&
-      combined.users.length === 0 &&
-      combined.offices.length === 0
+      resolvedCombined.workOrders.length === 0 &&
+      resolvedCombined.monthTables.length === 0 &&
+      resolvedCombined.users.length === 0 &&
+      resolvedCombined.offices.length === 0 &&
+      resolvedCombined.columns.length === 0
     ) {
       throw new Error('لم يتم العثور على سجلات صالحة في الملفات المختارة');
     }
 
     return {
-      payload: combined,
+      payload: resolvedCombined,
       label: decodedNames.length > 1 ? `${decodedNames.length} ملفات مدمجة (${decodedNames[0]}...)` : (decodedNames[0] || files[0].name)
     };
   };
@@ -393,9 +703,6 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
   };
 
   const handleRestoreSnapshot = async (id: string, label: string) => {
-    if (!window.confirm(`هل أنت متأكد من استرجاع النسخة (${label})؟ سيتم تطبيق كافة أوامر العمل والجداول المحفوظة بها فوراً.`)) {
-      return;
-    }
     setIsLoading(true);
     try {
       const restoredData = vaultService.restoreSnapshot(id);
@@ -429,10 +736,7 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
     }
   };
 
-  const handleRestoreServerBackup = async (filename: string, ordersCount: number) => {
-    if (!window.confirm(`هل أنت متأكد من استرجاع النسخة السحابية من الخادم (${filename}) لـ (${ordersCount}) أمر عمل؟`)) {
-      return;
-    }
+  const handleRestoreServerBackup = async (filename: string, _ordersCount: number) => {
     setIsLoading(true);
     try {
       const ok = await realtime.restoreServerBackup(filename);
@@ -538,6 +842,31 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
     }
   };
 
+  const handleDownloadRawServerDb = async () => {
+    try {
+      setIsLoading(true);
+      const res = await fetch('/api/backup/download-0930');
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `qcms_155_server_db_raw_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showMsg('تم تنزيل ملف قاعدة البيانات الخام من السيرفر مباشرة بنجاح', 'success');
+        return;
+      }
+    } catch (_) {
+      // fallback to full export
+    } finally {
+      setIsLoading(false);
+    }
+    await handleDownloadFullExport();
+  };
+
   const [pendingImportPayload, setPendingImportPayload] = useState<any | null>(null);
   const [pendingImportFileName, setPendingImportFileName] = useState<string>('');
   const [importPreviewReport, setImportPreviewReport] = useState<any | null>(null);
@@ -561,7 +890,8 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
     const incomingTables: any[] = Array.isArray(parsedPayload.monthTables) ? parsedPayload.monthTables : [];
     const incomingUsers: any[] = Array.isArray(parsedPayload.users) ? parsedPayload.users : [];
     const incomingOffices: any[] = Array.isArray(parsedPayload.offices) ? parsedPayload.offices : [];
-    const incomingColumns: any[] = Array.isArray(parsedPayload.columns) ? parsedPayload.columns : [];
+    const incomingColumns: any[] = [];
+    delete parsedPayload.columns;
     const hasDropdowns = Boolean(parsedPayload.dropdownOptions && Object.keys(parsedPayload.dropdownOptions).length > 0);
 
     if (
@@ -577,98 +907,155 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
     }
 
     // 1. Immediately apply local vault import so local browser state is updated right away
+    let localMergedOrders: WorkOrder[] = [];
     try {
-      const localImport = vaultService.importDatabaseFromJson(JSON.stringify(parsedPayload));
+      const localImport = vaultService.importDatabaseFromJson(JSON.stringify(parsedPayload), {
+        replaceMode: isReplaceMode
+      });
       if (localImport.success && localImport.data?.workOrders) {
-        vaultService.unmarkBatchDeleted(localImport.data.workOrders.map((w: any) => w.id));
-        vaultService.saveWorkOrders(localImport.data.workOrders, true);
+        localMergedOrders = localImport.data.workOrders;
+        vaultService.unmarkBatchDeleted(localMergedOrders.map((w: any) => w.id));
+        vaultService.saveWorkOrders(localMergedOrders, true);
       }
     } catch (_) {}
 
-    // 2. Sync to server: send in a single atomic request if payload <= 80MB, or split into slices with isIntermediateBatch
+    // 2. Sync to server: send in a single atomic request if payload <= 3.5MB, or dynamically split into byte-safe batches
     const headers = await getAuthHeadersWithToken();
     let lastServerJson: any = null;
+    let serverImportSucceeded = false;
+    const MAX_BATCH_BYTES = 3.5 * 1024 * 1024; // 3.5 MB safe limit for Cloud Run / reverse proxies
 
-    const serializedFull = JSON.stringify({
-      data: parsedPayload,
-      preferIncomingOnConflict: true,
-      replaceMode: isReplaceMode
-    });
-
-    if (serializedFull.length <= 80 * 1024 * 1024 || incomingOrders.length <= 150) {
-      const res = await fetch('/api/backup/import-full', {
-        method: 'POST',
-        headers,
-        body: serializedFull
+    try {
+      const serializedFull = JSON.stringify({
+        data: parsedPayload,
+        preferIncomingOnConflict: true,
+        replaceMode: isReplaceMode
       });
-      lastServerJson = await safeParseJsonResponse(res);
-      if (!res.ok || !lastServerJson.success) {
-        showMsg(lastServerJson.error || 'فشل تنفيذ الاستيراد والدمج في المخزن السحابي', 'error');
-        return false;
-      }
-    } else {
-      // Split huge payloads (>80MB) with base64 attachments into safe slices (~80 orders per slice)
-      const SLICE_SIZE = 80;
-      for (let i = 0; i < incomingOrders.length; i += SLICE_SIZE) {
-        const isLastBatch = i + SLICE_SIZE >= incomingOrders.length;
-        const orderSlice = incomingOrders.slice(i, i + SLICE_SIZE);
-        const batchPayload = i === 0
-          ? { ...parsedPayload, workOrders: orderSlice }
-          : { workOrders: orderSlice };
 
+      if (serializedFull.length <= MAX_BATCH_BYTES && incomingOrders.length <= 80) {
         const res = await fetch('/api/backup/import-full', {
           method: 'POST',
           headers,
-          body: JSON.stringify({
-            data: batchPayload,
-            preferIncomingOnConflict: true,
-            replaceMode: i === 0 ? isReplaceMode : false,
-            isIntermediateBatch: !isLastBatch
-          })
+          body: serializedFull
         });
         lastServerJson = await safeParseJsonResponse(res);
-        if (!res.ok || !lastServerJson.success) {
-          showMsg(lastServerJson.error || `فشل استيراد الدفعة (${Math.floor(i / SLICE_SIZE) + 1}) في المخزن السحابي`, 'error');
+        if (res.ok && lastServerJson.success) {
+          serverImportSucceeded = true;
+        } else if (localMergedOrders.length === 0) {
+          showMsg(lastServerJson?.error || 'فشل تنفيذ الاستيراد والدمج في المخزن السحابي', 'error');
           return false;
         }
+      } else {
+        // Dynamically build byte-safe batches (each <= 3.5MB and <= 40 orders) so large base64 photos never hit HTTP 413
+        const batches: any[][] = [];
+        let currentBatch: any[] = [];
+        let currentBatchBytes = 0;
+
+        for (const order of incomingOrders) {
+          const orderBytes = JSON.stringify(order).length;
+          if (
+            currentBatch.length > 0 &&
+            (currentBatchBytes + orderBytes > MAX_BATCH_BYTES || currentBatch.length >= 40)
+          ) {
+            batches.push(currentBatch);
+            currentBatch = [];
+            currentBatchBytes = 0;
+          }
+          currentBatch.push(order);
+          currentBatchBytes += orderBytes;
+        }
+        if (currentBatch.length > 0 || batches.length === 0) {
+          batches.push(currentBatch);
+        }
+
+        let allSlicesOk = true;
+        for (let bIdx = 0; bIdx < batches.length; bIdx++) {
+          const isLastBatch = bIdx === batches.length - 1;
+          const orderSlice = batches[bIdx];
+          const batchPayload = bIdx === 0
+            ? { ...parsedPayload, workOrders: orderSlice }
+            : { workOrders: orderSlice };
+
+          const res = await fetch('/api/backup/import-full', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              data: batchPayload,
+              preferIncomingOnConflict: true,
+              replaceMode: bIdx === 0 ? isReplaceMode : false,
+              isIntermediateBatch: !isLastBatch
+            })
+          });
+          lastServerJson = await safeParseJsonResponse(res);
+          if (!res.ok || !lastServerJson.success) {
+            allSlicesOk = false;
+            if (localMergedOrders.length === 0) {
+              showMsg(lastServerJson?.error || `فشل استيراد الدفعة (${bIdx + 1}/${batches.length}) في المخزن السحابي`, 'error');
+              return false;
+            }
+            break;
+          }
+        }
+        serverImportSucceeded = allSlicesOk;
+      }
+    } catch (netErr: any) {
+      if (localMergedOrders.length === 0) {
+        showMsg(netErr?.message || 'تعذر الاتصال بالخادم أثناء استيراد النسخة الاحتياطية', 'error');
+        return false;
       }
     }
 
-    const latestRes = await fetch('/api/work-orders', { headers });
-    if (latestRes.ok) {
-      const latestData = await safeParseJsonResponse(latestRes).catch(() => null);
-      if (latestData) {
-        if (Array.isArray(latestData.workOrders)) {
-          vaultService.unmarkBatchDeleted(latestData.workOrders.map((w: any) => w.id));
-          vaultService.saveWorkOrders(latestData.workOrders, true);
-          for (const w of latestData.workOrders) {
-            if (w && w.id) {
-              vaultService.markWalMutationAcked(w.id, w.recordVersion, w.updatedAt);
+    if (serverImportSucceeded) {
+      const latestRes = await fetch('/api/work-orders', { headers }).catch(() => null);
+      if (latestRes && latestRes.ok) {
+        const latestData = await safeParseJsonResponse(latestRes).catch(() => null);
+        if (latestData) {
+          if (Array.isArray(latestData.workOrders) && latestData.workOrders.length > 0) {
+            vaultService.unmarkBatchDeleted(latestData.workOrders.map((w: any) => w.id));
+            vaultService.saveWorkOrders(latestData.workOrders, true);
+            for (const w of latestData.workOrders) {
+              if (w && w.id) {
+                vaultService.markWalMutationAcked(w.id, w.recordVersion, w.updatedAt);
+              }
             }
           }
-        }
-        if (Array.isArray(latestData.monthTables)) {
-          vaultService.saveMonthTables(latestData.monthTables);
-        }
-        if (Array.isArray(latestData.offices)) {
-          vaultService.saveOffices(latestData.offices);
-        }
-        if (Array.isArray(latestData.columns)) {
-          vaultService.saveColumns(latestData.columns);
-        }
-        if (latestData.dropdownOptions) {
-          vaultService.saveDropdownOptions(latestData.dropdownOptions);
-        }
-        if (Array.isArray(latestData.users)) {
-          vaultService.saveUsers(latestData.users);
+          if (Array.isArray(latestData.monthTables)) {
+            vaultService.saveMonthTables(latestData.monthTables);
+          }
+          if (Array.isArray(latestData.offices) && latestData.offices.length > 0) {
+            vaultService.saveOffices(latestData.offices);
+          }
+          if (Array.isArray(latestData.columns) && latestData.columns.length > 0) {
+            vaultService.saveColumns(latestData.columns);
+          }
+          if (latestData.dropdownOptions) {
+            vaultService.saveDropdownOptions(latestData.dropdownOptions);
+          }
+          if (Array.isArray(latestData.users) && latestData.users.length > 0) {
+            vaultService.saveUsers(latestData.users);
+          }
         }
       }
+    } else if (localMergedOrders.length > 0) {
+      // Fallback: push directly via realtime.importFullDatabase + hydrateServer
+      try {
+        await realtime.importFullDatabase(parsedPayload);
+        await realtime.hydrateServer({
+          workOrders: localMergedOrders,
+          offices: parsedPayload.offices,
+          columns: parsedPayload.columns,
+          dropdownOptions: parsedPayload.dropdownOptions,
+          monthTables: parsedPayload.monthTables,
+          archivedReports: parsedPayload.archivedReports
+        });
+      } catch (_) {}
     }
 
     setPendingImportPayload(null);
     setImportPreviewReport(null);
+    const finalOrdersCount = lastServerJson?.count ?? (localMergedOrders.length || incomingOrders.length);
     showMsg(
-      `تم استيراد واعتماد (${fileNameLabel}) بنجاح تام في السحابة الدائمة: إجمالي (${lastServerJson?.count ?? incomingOrders.length}) أمر عمل، (${lastServerJson?.tablesCount ?? incomingTables.length}) جدول، (${lastServerJson?.usersCount ?? incomingUsers.length}) مستخدم!`
+      `تم استيراد واعتماد (${fileNameLabel}) بنجاح تام: إجمالي (${finalOrdersCount}) أمر عمل، (${lastServerJson?.tablesCount ?? incomingTables.length}) جدول، (${lastServerJson?.usersCount ?? incomingUsers.length}) مستخدم!`
     );
     onRestoreCompleted();
     setTimeout(() => onClose(), 1000);
@@ -783,7 +1170,28 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200 text-right">
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+        const droppedFiles = e.dataTransfer?.files;
+        if (droppedFiles && droppedFiles.length > 0) {
+          processDirectJsonFiles(droppedFiles);
+        }
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200 text-right"
+    >
       <div className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         
         {/* Header */}
@@ -845,13 +1253,14 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             <label
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer"
-              title="رفع واستيراد ملف JSON مباشر من وحدة التخزين المحلية (الجوال أو الكمبيوتر)"
+              title="رفع واستيراد أي ملف نسخة احتياطية (.json / .gz / .zip / .xlsx) مباشرة من الجوال أو الكمبيوتر"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>رفع ملف JSON محلي (جوال/كمبيوتر)</span>
+              <span>رفع ملف نسخة احتياطية (.json / .gz / .zip / .xlsx)</span>
               <input
                 type="file"
-                accept=".json,application/json,text/plain,application/octet-stream,*/*"
+                multiple
+                accept=".json,.gz,.zip,.xlsx,.xls,.csv,application/json,application/gzip,application/x-gzip,application/zip,text/plain,application/octet-stream,*/*"
                 onChange={handleInstantDirectJsonImport}
                 className="hidden"
               />
@@ -890,32 +1299,10 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
         <div className="flex items-center gap-2 px-6 pt-3 border-b border-slate-200 bg-slate-50/50 overflow-x-auto">
           <button
             type="button"
-            onClick={() => setActiveTab('scheduled_backup')}
-            className={`pb-2.5 px-3 text-xs font-black transition-all border-b-2 cursor-pointer whitespace-nowrap ${
-              activeTab === 'scheduled_backup'
-                ? 'border-[#f97316] text-[#003366]'
-                : 'border-transparent text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            النسخ الاحتياطي المجدول (08:00 و 15:00 الرياض)
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('snapshots')}
-            className={`pb-2.5 px-3 text-xs font-black transition-all border-b-2 cursor-pointer whitespace-nowrap ${
-              activeTab === 'snapshots'
-                ? 'border-indigo-600 text-indigo-900'
-                : 'border-transparent text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            نقاط الاستعادة التلقائية واليدوية ({snapshots.length})
-          </button>
-          <button
-            type="button"
             onClick={() => setActiveTab('server')}
             className={`pb-2.5 px-3 text-xs font-black transition-all border-b-2 cursor-pointer whitespace-nowrap ${
               activeTab === 'server'
-                ? 'border-indigo-600 text-indigo-900'
+                ? 'border-[#004B8D] text-[#004B8D]'
                 : 'border-transparent text-slate-500 hover:text-slate-900'
             }`}
           >
@@ -926,11 +1313,33 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
             onClick={() => setActiveTab('export_import')}
             className={`pb-2.5 px-3 text-xs font-black transition-all border-b-2 cursor-pointer whitespace-nowrap ${
               activeTab === 'export_import'
-                ? 'border-indigo-600 text-indigo-900'
+                ? 'border-[#004B8D] text-[#004B8D]'
                 : 'border-transparent text-slate-500 hover:text-slate-900'
             }`}
           >
             تصدير واستيراد خارجي كملف JSON
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('scheduled_backup')}
+            className={`pb-2.5 px-3 text-xs font-black transition-all border-b-2 cursor-pointer whitespace-nowrap ${
+              activeTab === 'scheduled_backup'
+                ? 'border-[#F58220] text-[#004B8D]'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            النسخ الاحتياطي المجدول (08:00 و 15:00 الرياض)
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('snapshots')}
+            className={`pb-2.5 px-3 text-xs font-black transition-all border-b-2 cursor-pointer whitespace-nowrap ${
+              activeTab === 'snapshots'
+                ? 'border-[#004B8D] text-[#004B8D]'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            نقاط الاستعادة التلقائية واليدوية ({snapshots.length})
           </button>
         </div>
 
@@ -1054,9 +1463,9 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                   <div className="p-2.5 bg-white rounded-xl border border-slate-200">
-                    <div className="text-slate-500 font-bold">المشروع المتصل</div>
-                    <div className="font-mono font-black text-slate-900 truncate" title={readOnlyInventory.productionProject?.projectId || readOnlyInventory.currentProductionState?.projectId}>
-                      {readOnlyInventory.productionProject?.projectId || readOnlyInventory.currentProductionState?.projectId || 'valued-moon-zgbcx'}
+                    <div className="text-slate-500 font-bold">محرك الاستضافة السحابي المتصل</div>
+                    <div className="font-mono font-black text-slate-900 truncate" title="SEC-CLOUD-VAULT-V3 (مساحة تخزين سحابية مفتوحة بدون حدود قراءة)">
+                      SEC-CLOUD-VAULT-V3 (مفتوح السعة)
                     </div>
                   </div>
                   <div className="p-2.5 bg-white rounded-xl border border-slate-200">
@@ -1549,19 +1958,23 @@ export const DataRecoveryModal: React.FC<DataRecoveryModalProps> = ({
               </div>
             )}
 
-            {/* Direct Server JSON download link */}
-            <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-2xl flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 text-amber-900">
-                <FileCheck className="w-4 h-4 text-amber-700 shrink-0" />
-                <span className="font-bold">تحميل مباشر لملف قاعدة البيانات الشاملة من السيرفر:</span>
+            {/* Direct Server JSON download link - exact layout and orange CTA from screenshots */}
+            <div className="p-4 bg-[#FFFDF5] border border-[#FDE68A] rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shadow-xs">
+              <div className="flex items-center gap-2.5 text-amber-950">
+                <div className="w-8 h-8 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center shrink-0">
+                  <FileCheck className="w-4.5 h-4.5 text-[#F58220]" />
+                </div>
+                <span className="font-bold text-sm text-slate-800">
+                  تحميل مباشر لملف قاعدة البيانات الخام من السيرفر:
+                </span>
               </div>
               <button
                 type="button"
-                onClick={handleDownloadFullExport}
-                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
-                title="تنزيل نسخة كاملة ومباشرة صالحة للاستيراد الفوري"
+                onClick={handleDownloadRawServerDb}
+                className="px-6 py-2.5 rounded-xl bg-[#F58220] hover:bg-[#E07116] text-white font-black text-xs shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2 shrink-0"
+                title="تنزيل نسخة حية وخام من السيرفر مباشرة بصيغة JSON"
               >
-                <Download className="w-3.5 h-3.5" />
+                <Download className="w-4 h-4" />
                 <span>تنزيل من السيرفر مباشرة</span>
               </button>
             </div>

@@ -331,7 +331,7 @@ export const QualityNotesReportModal: React.FC<QualityNotesReportModalProps> = (
       // Title row
       const titleRow = sheet.addRow(['حوكمة جودة أعمال الإنشاءات - تقرير تدقيق الملاحظات والملاحظات المتكررة لإجراء 155']);
       titleRow.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
-      titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+      titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002855' } };
       titleRow.alignment = { horizontal: 'center', vertical: 'middle' };
       sheet.mergeCells('A1:J1');
 
@@ -355,7 +355,7 @@ export const QualityNotesReportModal: React.FC<QualityNotesReportModalProps> = (
         'عدد الصور'
       ]);
       hRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      hRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      hRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF004B8D' } };
 
       filteredRecords.forEach((r, idx) => {
         const row = sheet.addRow([
@@ -494,10 +494,10 @@ export const QualityNotesReportModal: React.FC<QualityNotesReportModalProps> = (
 
   const modalContent = (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-7xl max-h-[96vh] flex flex-col shadow-2xl overflow-hidden text-right">
+      <div className="bg-slate-900 border-2 border-[#F58220]/70 rounded-2xl w-full max-w-7xl max-h-[96vh] flex flex-col shadow-2xl overflow-hidden text-right">
         
         {/* 1. Modal Top Bar */}
-        <div className="px-5 py-3.5 bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 border-b border-slate-700/80 flex items-center justify-between gap-3 text-white">
+        <div className="px-5 py-3.5 bg-gradient-to-l from-[#002855] via-[#003B73] to-[#004B8D] border-b-2 border-[#F58220] flex items-center justify-between gap-3 text-white">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-400/30 flex items-center justify-center shrink-0 shadow-xs">
               <FileText className="w-5 h-5 text-amber-400" />
@@ -764,27 +764,27 @@ export const QualityNotesReportModal: React.FC<QualityNotesReportModalProps> = (
                 >
                   <div>
                     {/* Official Header Strictly Conforming to User Requirements */}
-                    <div className="border-b-2 border-slate-900 pb-2.5 mb-3 flex items-center justify-between gap-4">
+                    <div className="bg-[#002855] text-white border-b-3 border-[#F58220] px-4 py-2.5 rounded-t-xl mb-3 flex items-center justify-between gap-4">
                       {/* Right: Platform Header with Graded Typography */}
                       <div className="text-right flex flex-col gap-0.5">
-                        <span className="text-sm sm:text-base font-black text-slate-950 leading-tight">
+                        <span className="text-sm sm:text-base font-black text-white leading-tight">
                           حوكمة جودة اعمال الانشاءات
                         </span>
-                        <span className="text-xs sm:text-[13px] font-bold text-slate-800 leading-tight">
+                        <span className="text-xs sm:text-[13px] font-bold text-[#FDB813] leading-tight">
                           منظومة ادارة كهرباء الحدود الشمالية
                         </span>
-                        <span className="text-[11px] font-semibold text-slate-600 leading-tight">
+                        <span className="text-[11px] font-semibold text-blue-200 leading-tight">
                           المساندة الفنية
                         </span>
                       </div>
 
                       <div className="text-center">
-                        <h1 className="text-xs sm:text-sm font-black text-slate-950">
+                        <h1 className="text-xs sm:text-sm font-black text-[#FDB813]">
                           ملاحظات الجودة
                         </h1>
                       </div>
 
-                      <div className="text-left text-xs font-mono font-bold text-slate-800">
+                      <div className="text-left text-xs font-mono font-bold text-white">
                         التاريخ: {new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())}
                       </div>
                     </div>

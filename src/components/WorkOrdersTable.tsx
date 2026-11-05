@@ -8,6 +8,7 @@ import {
   UserPermissions,
   AttachedInspectionFile,
   SHAREPOINT_AUDIT_URL,
+  buildSharePointDirectWorkOrderSearchUrl,
   SubOffice
 } from '../types';
 import { 
@@ -75,7 +76,8 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  MoveHorizontal
+  MoveHorizontal,
+  BookOpen
 } from 'lucide-react';
 import { DeleteTableModal } from './DeleteTableModal';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
@@ -87,10 +89,13 @@ import { QualityNotesReportModal } from './QualityNotesReportModal';
 import { AuditChecklistModal, renderAuditCategoryIcon } from './AuditChecklistModal';
 import {
   TechnicalSupportAuditModal,
+  AuditStagesReferenceModal,
   TECHNICAL_SUPPORT_CHECKLIST_ITEMS,
   normalizeSupportChecklistValue,
   extractOrderSupportChecklistMap,
   getEvaluatedSupportChecklistKeys,
+  extractColumnSupportChecklistMap,
+  getEvaluatedColumnSupportChecklistKeys,
   calculateSupportChecklistStats,
   deriveSyncedAttachmentStatus,
   SupportChecklistFieldKey,
@@ -108,7 +113,7 @@ import {
 } from '../services/exportService';
 import { realtime } from '../services/realtimeService';
 import { soundService } from '../services/soundService';
-import { getArabicMonthName, buildCrossTableMatchesMap, MatchedTableOrder, getWorkOrderIdentityKey, isSameWorkOrderIdentity } from '../utils/tableScope';
+import { getArabicMonthName, buildCrossTableMatchesMap, MatchedTableOrder, getWorkOrderIdentityKey, isSameWorkOrderIdentity, findDuplicateOrderIdsFast } from '../utils/tableScope';
 import { isSessionUnlocked, canUserEditColumn, isColumnUniversallyEditable, getSavedCurrentUser } from '../utils/security';
 import { PlatformUser, MonthTable, WorkOrderAuditColumnData } from '../types';
 import { ensurePhotosFileColumn } from '../data/initialData';
@@ -122,6 +127,7 @@ import {
 import { calculateSmartPopoverPosition, getPopoverStyle, CalculatedPopoverPosition } from '../utils/popoverPosition';
 import { useUIDesignMode } from '../utils/uiDesignMode';
 import { getContractorsForOffice, getConsultantsForOffice } from '../services/contractorService';
+import { getEffectiveProcedure155Status, isOrderQualified100InAllThreeAudits } from '../utils/auditTracker';
 
 interface WorkOrdersTableProps {
   orders: WorkOrder[];
@@ -161,6 +167,7 @@ interface WorkOrdersTableProps {
   offices?: SubOffice[];
   onOpenNotesReport?: (mode?: 'all' | 'recurring_all' | 'recurring_contractor', contractor?: string) => void;
   highlightedOrderId?: string | null;
+  onActiveAuditOrderChange?: (orderId: string | null) => void;
 }
 
 export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
@@ -200,7 +207,8 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
   isSessionUnlockedState,
   offices = [],
   onOpenNotesReport: externalOpenNotesReport,
-  highlightedOrderId
+  highlightedOrderId,
+  onActiveAuditOrderChange
 }) => {
   const [uiMode] = useUIDesignMode();
   const isERP = uiMode === 'official_erp';
@@ -302,6 +310,10 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
       const rowEl = document.getElementById(`wo-row-${highlightedOrderId}`);
       if (rowEl) {
         rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        rowEl.classList.add('ring-4', 'ring-amber-500', 'bg-amber-100');
+        setTimeout(() => {
+          rowEl.classList.remove('ring-4', 'ring-amber-500', 'bg-amber-100');
+        }, 2200);
       }
     }, 120);
     return () => clearTimeout(timer);
@@ -332,12 +344,20 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
   const [cellFileInputOrderId, setCellFileInputOrderId] = useState<string | null>(null);
   const cellFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Audit Checklist Modal State for PDC and Construction Audit (18 قوائم تحقق رسمية)
+  // Audit Checklist Modal State for PDC and Construction Audit (القائمة الأساسية الموحدة + مراحل التدقيق للاطلاع)
   const [activeAuditModal, setActiveAuditModal] = useState<{
     order: WorkOrder;
     columnField: 'pdcAudit' | 'constructionAudit';
     columnTitle: string;
     initialCategoryKey?: AuditCategoryKey | null;
+    initialFocusField?: SupportChecklistFieldKey | null;
+    initialOpenStages?: boolean;
+  } | null>(null);
+
+  // Direct Read-Only Audit Stages Reference Modal State (نافذة مراحل التدقيق المنبثقة للاطلاع فقط)
+  const [activeStagesReferenceModal, setActiveStagesReferenceModal] = useState<{
+    order: WorkOrder;
+    columnTitle: string;
   } | null>(null);
 
   // External Technical Support Audit Checklist Card State (بطاقة نتائج تدقيق المساندة الفنية - أو وضع العرض فقط من بطاقة حالة الإرفاق)
@@ -346,6 +366,17 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
     focusField?: SupportChecklistFieldKey | null;
     viewMode?: 'audit' | 'attachment_readonly';
   } | null>(null);
+
+  useEffect(() => {
+    if (!onActiveAuditOrderChange) return;
+    const activeId =
+      activeAuditModal?.order?.id ||
+      (activeSupportAuditModal && activeSupportAuditModal.viewMode !== 'attachment_readonly'
+        ? activeSupportAuditModal.order?.id
+        : null) ||
+      null;
+    onActiveAuditOrderChange(activeId);
+  }, [activeAuditModal, activeSupportAuditModal, onActiveAuditOrderChange]);
 
   const handleCellFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!cellFileInputOrderId || !e.target.files || e.target.files.length === 0) return;
@@ -486,14 +517,14 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
   // Auto-fit rows and columns handler
   const handleAutoFitAll = () => {
     setIsAutoFitToScreen(true);
-    setIsWrapTextEnabled(true);
-    setTableDensity('normal');
+    setIsWrapTextEnabled(false);
+    setTableDensity('compact');
     setZoomPercent(100);
-    setExportNotification('تم احتواء كافة الصفوف والأعمدة تلقائياً لمطابقة المحتوى وحجم الشاشة');
+    setExportNotification('تم ضغط واحتواء كافة الصفوف والأعمدة تلقائياً لمنع التكدس وإظهار أكبر عدد من الصفوف');
     setTimeout(() => setExportNotification(null), 3500);
   };
 
-  const [tableDensity, setTableDensity] = useState<'compact' | 'normal' | 'spacious'>('normal');
+  const [tableDensity, setTableDensity] = useState<'compact' | 'normal' | 'spacious'>('compact');
   // Default unpinned columns as requested by user (اجعل الافتراضي للجداول عدم تثبيت الاعمدة المحددة)
   const [isStickyFirstCol, setIsStickyFirstCol] = useState<boolean>(false);
   const [isStickyCoreColumns, setIsStickyCoreColumns] = useState<boolean>(false);
@@ -787,14 +818,43 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
   const handlePan = (direction: 'right' | 'left' | 'start' | 'end') => {
     const container = tableContainerRef.current;
     if (!container) return;
+
+    const step = 380;
+
     if (direction === 'start') {
-      container.scrollTo({ left: 0, behavior: 'smooth' });
+      // Beginning of table (أقصى اليمين - العمود الأول)
+      container.scrollTo({ left: 100000, behavior: 'smooth' });
+      setTimeout(() => {
+        if (container.scrollLeft < 0) {
+          container.scrollTo({ left: 0, behavior: 'smooth' });
+        }
+      }, 30);
     } else if (direction === 'end') {
-      container.scrollTo({ left: container.scrollWidth, behavior: 'smooth' });
+      // End of table (أقصى اليسار - الأعمدة الأخيرة)
+      container.scrollTo({ left: -100000, behavior: 'smooth' });
+      setTimeout(() => {
+        if (container.scrollLeft > 0) {
+          container.scrollTo({ left: container.scrollWidth, behavior: 'smooth' });
+        }
+      }, 30);
     } else if (direction === 'right') {
-      container.scrollBy({ left: 240, behavior: 'smooth' });
+      // Scroll rightwards (تحريك نحو اليمين - العودة للبداية)
+      const initial = container.scrollLeft;
+      container.scrollBy({ left: step, behavior: 'smooth' });
+      setTimeout(() => {
+        if (container.scrollLeft === initial) {
+          container.scrollBy({ left: -step, behavior: 'smooth' });
+        }
+      }, 60);
     } else if (direction === 'left') {
-      container.scrollBy({ left: -240, behavior: 'smooth' });
+      // Scroll leftwards (تحريك نحو اليسار - التقدم للأعمدة التالية)
+      const initial = container.scrollLeft;
+      container.scrollBy({ left: -step, behavior: 'smooth' });
+      setTimeout(() => {
+        if (container.scrollLeft === initial) {
+          container.scrollBy({ left: step, behavior: 'smooth' });
+        }
+      }, 60);
     }
   };
 
@@ -939,32 +999,54 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
     };
   }, [openInlineDropdown?.orderId, openInlineDropdown?.field, editingQualityNotes?.orderId, openFilterCol]);
 
-  // Compute distinct unique values for each column for the filters
+  // Compute distinct unique values lazily only when a column filter dropdown is open
   const distinctValuesByField = useMemo(() => {
     const map: Record<string, { value: string; count: number }[]> = {};
+    if (!openFilterCol) return map;
 
-    columns.forEach(col => {
+    const targetCols = columns.filter(c => c.field === openFilterCol);
+    targetCols.forEach(col => {
       const counts: Record<string, number> = {};
-      orders.forEach(order => {
+      for (let i = 0; i < orders.length; i++) {
+        const order = orders[i];
         let val = '';
         if (col.field === 'photoCoordination' || col.field === 'photos') {
           val = order.photoCoordination || (order.photos && order.photos.length > 0 ? 'مرفق صورة كملاحظة' : 'لا توجد صور مطلوبة');
         } else if (col.field === 'procedure155') {
-          val = (order.procedureSyncTime || order.procedureSyncEmail) ? String(order.procedure155 || '').trim() : '';
+          val = getEffectiveProcedure155Status(order);
+        } else if (col.field === 'attachmentStatus') {
+          const evalKeys = getEvaluatedSupportChecklistKeys(order);
+          val = evalKeys.length > 0
+            ? String(order.attachmentStatus || '')
+            : (order.attachmentStatus && order.attachmentStatus !== 'غير جاهز للارفاق' ? String(order.attachmentStatus) : '');
+        } else if (col.field === 'pdcAudit' || col.field === 'constructionAudit') {
+          const evalKeys = getEvaluatedColumnSupportChecklistKeys(order, col.field as 'pdcAudit' | 'constructionAudit');
+          const rawCol = order[col.field] as WorkOrderAuditColumnData | undefined;
+          if (evalKeys.length > 0) {
+            const st = calculateSupportChecklistStats(extractColumnSupportChecklistMap(order, col.field as 'pdcAudit' | 'constructionAudit'), evalKeys);
+            val = st.isAllApplicableCompleted ? 'مؤهل' : 'غير مؤهل';
+          } else if (rawCol?.mainStatus === 'مؤهل' || rawCol?.mainStatus === 'غير مؤهل') {
+            val = rawCol.mainStatus;
+          } else {
+            val = '';
+          }
+        } else if (col.field === 'procedure155Status') {
+          const evalKeys = getEvaluatedSupportChecklistKeys(order);
+          if (evalKeys.length > 0) {
+            const st = calculateSupportChecklistStats(extractOrderSupportChecklistMap(order), evalKeys);
+            val = st.isAllApplicableCompleted && !String(order.procedure155Status || '').includes('غير مؤهل') ? 'مؤهل' : 'غير مؤهل';
+          } else {
+            const rawS = String(order.procedure155Status || '').trim();
+            val = rawS && rawS !== 'قيد التدقيق' && rawS !== 'قيد التدقيق الفني' ? rawS : '';
+          }
         } else {
           val = String(order[col.field] ?? '');
         }
-        if (!val) {
-          if (col.field === 'attachmentStatus') {
-            val = 'غير جاهز للارفاق';
-          } else if (['photoDocumentation', 'consultantForms', 'consultantClearanceForms', 'form190', 'form200', 'inspectionForm'].includes(col.field)) {
-            val = 'غير مكتمل';
-          } else {
-            val = '(فارغ)';
-          }
+        if (!val || val === '-' || val === 'لا توجد ملاحظات' || val === 'لا توجد ملاحظات حالياً') {
+          val = '(فارغ)';
         }
         counts[val] = (counts[val] || 0) + 1;
-      });
+      }
 
       map[col.field] = Object.entries(counts).map(([value, count]) => ({
         value,
@@ -973,31 +1055,16 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
     });
 
     return map;
-  }, [orders, columns]);
+  }, [orders, columns, openFilterCol]);
 
-  // Duplicate detection matching canonical (workOrderNumber && workOrderCode) identity
+  // Fast O(N) duplicate detection matching canonical (workOrderNumber && workOrderCode) identity
   const duplicateOrderIds = useMemo(() => {
-    const dupIds = new Set<string>();
     const pool = allOrders && allOrders.length > 0 ? allOrders : orders;
-    for (let i = 0; i < orders.length; i++) {
-      const o = orders[i];
-      if (!o || !o.workOrderNumber) continue;
-      for (let j = 0; j < pool.length; j++) {
-        const other = pool[j];
-        if (!other || other.id === o.id) continue;
-        if (isSameWorkOrderIdentity(o.workOrderNumber, o.workOrderCode, other.workOrderNumber, other.workOrderCode)) {
-          dupIds.add(o.id);
-          break;
-        }
-      }
-    }
-    return dupIds;
+    return findDuplicateOrderIdsFast(orders, pool);
   }, [orders, allOrders]);
 
   // Total count of rows that have duplicate pair in the dataset
-  const totalDuplicateRowsCount = useMemo(() => {
-    return orders.filter(o => duplicateOrderIds.has(o.id)).length;
-  }, [orders, duplicateOrderIds]);
+  const totalDuplicateRowsCount = duplicateOrderIds.size;
 
   // Filter orders according to active column filters + optional duplicate-only toggle + smart quick filter + table search
   const filteredOrders = useMemo(() => {
@@ -1015,12 +1082,26 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
       } else if (smartQuickFilter === 'edited') {
         if (!order.isEdited) return false;
       } else if (smartQuickFilter === 'ready') {
-        const s = String(order.procedure155Status || '');
-        if (s.includes('غير')) return false;
-        if (!s.includes('مؤهل') && !s.includes('معتمد') && !s.includes('تم')) return false;
+        const evalKeys = getEvaluatedSupportChecklistKeys(order);
+        const s = String(order.procedure155Status || '').trim();
+        const eff155 = getEffectiveProcedure155Status(order);
+        const isReady =
+          isOrderQualified100InAllThreeAudits(order) ||
+          (!eff155.includes('غير') && (eff155.includes('مؤهل') || eff155.includes('تم'))) ||
+          (evalKeys.length > 0 && !s.includes('غير') && (s.includes('مؤهل') || s.includes('معتمد')));
+        if (!isReady) return false;
       } else if (smartQuickFilter === 'not_ready') {
-        const s = String(order.procedure155Status || '');
-        const isReady = !s.includes('غير') && (s.includes('مؤهل') || s.includes('معتمد') || s.includes('تم'));
+        const evalKeys = getEvaluatedSupportChecklistKeys(order);
+        const pdcEval = getEvaluatedColumnSupportChecklistKeys(order, 'pdcAudit');
+        const constEval = getEvaluatedColumnSupportChecklistKeys(order, 'constructionAudit');
+        const s = String(order.procedure155Status || '').trim();
+        const eff155 = getEffectiveProcedure155Status(order);
+        const hasAnyEvaluated = evalKeys.length > 0 || pdcEval.length > 0 || constEval.length > 0 || Boolean(s && s !== 'قيد التدقيق') || Boolean(eff155);
+        if (!hasAnyEvaluated) return false;
+        const isReady =
+          isOrderQualified100InAllThreeAudits(order) ||
+          (!eff155.includes('غير') && (eff155.includes('مؤهل') || eff155.includes('تم'))) ||
+          (evalKeys.length > 0 && !s.includes('غير') && (s.includes('مؤهل') || s.includes('معتمد')));
         if (isReady) return false;
       } else if (smartQuickFilter === 'with_photos') {
         const hasPhotos = (order.photos && order.photos.length > 0) || String(order.photoDocumentation).includes('مكتمل') || String(order.photoCoordination).includes('مرفق');
@@ -1043,9 +1124,8 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
         const cont = (order.contractor || '').toLowerCase();
         const cons = (order.consultant || '').toLowerCase();
         const notes = (order.qualityNotes || order.executionNotes || '').toLowerCase();
-        const stat = (order.executionStatus || '').toLowerCase();
         const pStat = (order.procedure155Status || '').toLowerCase();
-        const attStat = (order.attachmentStatus || 'غير جاهز للارفاق').toLowerCase();
+        const attStat = (order.attachmentStatus || '').toLowerCase();
 
         const match = num.includes(query) ||
           code.includes(query) ||
@@ -1053,7 +1133,6 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
           cont.includes(query) ||
           cons.includes(query) ||
           notes.includes(query) ||
-          stat.includes(query) ||
           pStat.includes(query) ||
           attStat.includes(query);
 
@@ -1068,18 +1147,37 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
         if (field === 'photoCoordination' || field === 'photos') {
           cellVal = order.photoCoordination || (order.photos && order.photos.length > 0 ? 'مرفق صورة كملاحظة' : 'لا توجد صور مطلوبة');
         } else if (field === 'procedure155') {
-          cellVal = (order.procedureSyncTime || order.procedureSyncEmail) ? String(order.procedure155 || '').trim() : '';
+          cellVal = getEffectiveProcedure155Status(order);
+        } else if (field === 'attachmentStatus') {
+          const evalKeys = getEvaluatedSupportChecklistKeys(order);
+          cellVal = evalKeys.length > 0
+            ? String(order.attachmentStatus || '')
+            : (order.attachmentStatus && order.attachmentStatus !== 'غير جاهز للارفاق' ? String(order.attachmentStatus) : '');
+        } else if (field === 'pdcAudit' || field === 'constructionAudit') {
+          const evalKeys = getEvaluatedColumnSupportChecklistKeys(order, field as 'pdcAudit' | 'constructionAudit');
+          const rawCol = order[field] as WorkOrderAuditColumnData | undefined;
+          if (evalKeys.length > 0) {
+            const st = calculateSupportChecklistStats(extractColumnSupportChecklistMap(order, field as 'pdcAudit' | 'constructionAudit'), evalKeys);
+            cellVal = st.isAllApplicableCompleted ? 'مؤهل' : 'غير مؤهل';
+          } else if (rawCol?.mainStatus === 'مؤهل' || rawCol?.mainStatus === 'غير مؤهل') {
+            cellVal = rawCol.mainStatus;
+          } else {
+            cellVal = '';
+          }
+        } else if (field === 'procedure155Status') {
+          const evalKeys = getEvaluatedSupportChecklistKeys(order);
+          if (evalKeys.length > 0) {
+            const st = calculateSupportChecklistStats(extractOrderSupportChecklistMap(order), evalKeys);
+            cellVal = st.isAllApplicableCompleted && !String(order.procedure155Status || '').includes('غير مؤهل') ? 'مؤهل' : 'غير مؤهل';
+          } else {
+            const rawS = String(order.procedure155Status || '').trim();
+            cellVal = rawS && rawS !== 'قيد التدقيق' && rawS !== 'قيد التدقيق الفني' ? rawS : '';
+          }
         } else {
           cellVal = String(order[field] ?? '');
         }
-        if (!cellVal) {
-          if (field === 'attachmentStatus') {
-            cellVal = 'غير جاهز للارفاق';
-          } else if (['photoDocumentation', 'consultantForms', 'consultantClearanceForms', 'form190', 'form200', 'inspectionForm'].includes(field)) {
-            cellVal = 'غير مكتمل';
-          } else {
-            cellVal = '(فارغ)';
-          }
+        if (!cellVal || cellVal === '-' || cellVal === 'لا توجد ملاحظات' || cellVal === 'لا توجد ملاحظات حالياً') {
+          cellVal = '(فارغ)';
         }
 
         if (!selectedValues.includes(cellVal)) {
@@ -1090,42 +1188,80 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
     });
   }, [orders, columnFilters, filterOnlyDuplicates, duplicateOrderIds, smartQuickFilter, tableSearchText, crossTableMatchesMap]);
 
-  // Aggregate stats for quick filters and summary bar
-  const readyOrdersCount = useMemo(() => {
-    return orders.filter(w => {
-      const s = String(w.procedure155Status || '');
-      if (s.includes('غير')) return false;
-      return s.includes('مؤهل') || s.includes('معتمد') || s.includes('تم');
-    }).length;
-  }, [orders]);
+  // Single-pass O(N) aggregate stats for quick filters and summary bar
+  const {
+    readyOrdersCount,
+    notReadyOrdersCount,
+    withPhotosCount,
+    withoutPhotosCount,
+    editedOrdersCount,
+    newRowsCount,
+    nonEditedRowsCount,
+    duplicateRowsCount,
+    importedRowsCount
+  } = useMemo(() => {
+    let ready = 0;
+    let notReady = 0;
+    let withPhotos = 0;
+    let edited = 0;
+    let newRows = 0;
+    let nonEdited = 0;
+    let duplicates = 0;
+    let imported = 0;
 
-  const notReadyOrdersCount = Math.max(0, orders.length - readyOrdersCount);
+    for (let i = 0; i < orders.length; i++) {
+      const w = orders[i];
+      const evalKeys = getEvaluatedSupportChecklistKeys(w);
+      const pdcEval = getEvaluatedColumnSupportChecklistKeys(w, 'pdcAudit');
+      const constEval = getEvaluatedColumnSupportChecklistKeys(w, 'constructionAudit');
+      const s = String(w.procedure155Status || '').trim();
+      const eff155 = getEffectiveProcedure155Status(w);
+      const hasAnyEvaluated =
+        evalKeys.length > 0 ||
+        pdcEval.length > 0 ||
+        constEval.length > 0 ||
+        Boolean(s && s !== 'قيد التدقيق' && s !== 'قيد التدقيق الفني') ||
+        Boolean(eff155);
 
-  const withPhotosCount = useMemo(() => {
-    return orders.filter(w => (w.photos && w.photos.length > 0) || String(w.photoDocumentation).includes('مكتمل') || String(w.photoCoordination).includes('مرفق')).length;
-  }, [orders]);
+      const isReady =
+        isOrderQualified100InAllThreeAudits(w) ||
+        (!eff155.includes('غير') && (eff155.includes('مؤهل') || eff155.includes('تم'))) ||
+        (evalKeys.length > 0 && !s.includes('غير') && (s.includes('مؤهل') || s.includes('معتمد')));
 
-  const withoutPhotosCount = Math.max(0, orders.length - withPhotosCount);
+      if (isReady) {
+        ready++;
+      } else if (hasAnyEvaluated) {
+        notReady++;
+      }
+      if ((w.photos && w.photos.length > 0) || String(w.photoDocumentation).includes('مكتمل') || String(w.photoCoordination).includes('مرفق')) {
+        withPhotos++;
+      }
+      if (w.isEdited) {
+        edited++;
+      } else {
+        nonEdited++;
+        if (w.isNew) newRows++;
+      }
+      if (duplicateOrderIds.has(w.id)) {
+        duplicates++;
+      }
+      if (w.isImported) {
+        imported++;
+      }
+    }
 
-  const editedOrdersCount = useMemo(() => {
-    return orders.filter(w => Boolean(w.isEdited)).length;
-  }, [orders]);
-
-  const newRowsCount = useMemo(() => {
-    return orders.filter(w => Boolean(w.isNew && !w.isEdited)).length;
-  }, [orders]);
-
-  const nonEditedRowsCount = useMemo(() => {
-    return orders.filter(w => !w.isEdited).length;
-  }, [orders]);
-
-  const duplicateRowsCount = useMemo(() => {
-    return orders.filter(w => duplicateOrderIds.has(w.id)).length;
+    return {
+      readyOrdersCount: ready,
+      notReadyOrdersCount: notReady,
+      withPhotosCount: withPhotos,
+      withoutPhotosCount: Math.max(0, orders.length - withPhotos),
+      editedOrdersCount: edited,
+      newRowsCount: newRows,
+      nonEditedRowsCount: nonEdited,
+      duplicateRowsCount: duplicates,
+      importedRowsCount: imported
+    };
   }, [orders, duplicateOrderIds]);
-
-  const importedRowsCount = useMemo(() => {
-    return orders.filter(w => Boolean(w.isImported)).length;
-  }, [orders]);
 
   const isTableDataFilterActive = ['new_rows', 'duplicate', 'unmodified', 'edited', 'cross_table_match', 'imported'].includes(smartQuickFilter);
 
@@ -1143,9 +1279,8 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
 
   const overallReadyRate = orders.length > 0 ? Math.round((readyOrdersCount / orders.length) * 100) : 0;
 
-  // Bulk action: approve selected orders as 155 ready
+  // Bulk action: approve selected orders as 155 ready (or all ready orders in current view if none selected)
   const handleBulkApprove155 = async () => {
-    if (selectedOrderIds.size === 0) return;
     const now = new Date();
     const formatTimestamp = (d: Date = new Date()) => {
       const yyyy = d.getFullYear();
@@ -1163,21 +1298,49 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
     const activeUserEmail = (effectiveUser?.email || effectiveUser?.username || '').trim();
     const activeUserName = (effectiveUser?.displayName || effectiveUser?.username || 'مستخدم معتمد').trim();
 
-    const ids = Array.from(selectedOrderIds);
-    for (const id of ids) {
-      const target = orders.find(o => o.id === id);
-      if (target && onUpdateOrder) {
+    let targets: WorkOrder[] = [];
+    if (selectedOrderIds.size > 0) {
+      targets = orders.filter(o => selectedOrderIds.has(o.id));
+    } else {
+      targets = orders.filter(o => {
+        const s = String(o.procedure155Status || '');
+        return isOrderQualified100InAllThreeAudits(o) || (s.includes('مؤهل') && !s.includes('غير'));
+      });
+    }
+
+    if (targets.length === 0) {
+      setExportNotification('يرجى تحديد أوامر العمل المراد اعتمادها أولاً');
+      setTimeout(() => setExportNotification(null), 3000);
+      return;
+    }
+
+    for (const target of targets) {
+      if (onUpdateOrder) {
         onUpdateOrder({
           ...target,
           procedure155Status: 'مؤهل للاغلاق ( معتمد )',
-          executionStatus: 'جاهز للاستلام 155',
+          procedure155: 'مؤهل لإجراء 155',
           statusSyncTime: formattedSyncTime,
           statusSyncEmail: activeUserEmail,
-          statusSyncUser: activeUserName
-        });
+          statusSyncUser: activeUserName,
+          procedureSyncTime: formattedSyncTime,
+          procedureSyncEmail: activeUserEmail,
+          procedureSyncUser: activeUserName,
+          _skipSensitiveConfirm: true,
+          _userTouchedFields: [
+            'procedure155Status',
+            'procedure155',
+            'statusSyncTime',
+            'statusSyncEmail',
+            'statusSyncUser',
+            'procedureSyncTime',
+            'procedureSyncEmail',
+            'procedureSyncUser'
+          ]
+        } as any);
       }
     }
-    setExportNotification(`تم اعتماد (${ids.length}) أمر عمل محدد كـ (مؤهل للاغلاق - معتمد) بنجاح`);
+    setExportNotification(`تم اعتماد (${targets.length}) أمر عمل كـ (مؤهل للاغلاق - معتمد) بنجاح تام`);
     setTimeout(() => setExportNotification(null), 3500);
   };
 
@@ -1329,18 +1492,29 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
     // 1. تدقيق PDC (pdcAudit)
     // 2. تدقيق الإنشاءات (constructionAudit)
     // 3. تدقيق المساندة الفنية (procedure155Status)
+    const touchedFields: string[] = [field, 'customFields'];
+    if (field === 'qualityNotes') {
+      touchedFields.push('executionNotes', 'qualityNoteItems');
+    }
+
     if (field === 'pdcAudit' && newValue && typeof newValue === 'object') {
+      const existingPdc =
+        order.pdcAudit && typeof order.pdcAudit === 'object' ? order.pdcAudit : {};
+      const isResetPdc =
+        Array.isArray(newValue.evaluatedKeys) &&
+        newValue.evaluatedKeys.length === 0 &&
+        (!newValue.mainStatus || newValue.mainStatus === 'غير محدد');
       updated.pdcAudit = {
-        ...(order.pdcAudit || {}),
+        ...existingPdc,
         ...newValue,
-        lastUpdatedAt: formattedSyncTime,
-        lastUpdatedBy: activeUserName,
-        auditorUserId: effectiveUser?.id || 'user',
-        auditorName: activeUserName,
-        auditorEmail: activeUserEmail,
-        auditDateRiyadh: riyadhDateStr,
-        auditTimeRiyadh: riyadhTimeStr,
-        syncStatus: 'محفوظ ومزامن'
+        lastUpdatedAt: isResetPdc ? '' : formattedSyncTime,
+        lastUpdatedBy: isResetPdc ? '' : activeUserName,
+        auditorUserId: isResetPdc ? '' : effectiveUser?.id || 'user',
+        auditorName: isResetPdc ? '' : activeUserName,
+        auditorEmail: isResetPdc ? '' : activeUserEmail,
+        auditDateRiyadh: isResetPdc ? '' : riyadhDateStr,
+        auditTimeRiyadh: isResetPdc ? '' : riyadhTimeStr,
+        syncStatus: isResetPdc ? 'بانتظار التدقيق' : 'محفوظ ومزامن'
       };
       updated.statusSyncTime = formattedSyncTime;
       updated.statusSyncDateRiyadh = riyadhDateStr;
@@ -1348,18 +1522,35 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
       updated.statusSyncEmail = activeUserEmail;
       updated.statusSyncUser = activeUserName;
       updated.auditSyncStatus = 'محفوظ ومزامن';
+      touchedFields.push(
+        'pdcAudit',
+        'statusSyncTime',
+        'statusSyncDateRiyadh',
+        'statusSyncTimeRiyadh',
+        'statusSyncEmail',
+        'statusSyncUser',
+        'auditSyncStatus'
+      );
     } else if (field === 'constructionAudit' && newValue && typeof newValue === 'object') {
+      const existingConst =
+        order.constructionAudit && typeof order.constructionAudit === 'object'
+          ? order.constructionAudit
+          : {};
+      const isResetConst =
+        Array.isArray(newValue.evaluatedKeys) &&
+        newValue.evaluatedKeys.length === 0 &&
+        (!newValue.mainStatus || newValue.mainStatus === 'غير محدد');
       updated.constructionAudit = {
-        ...(order.constructionAudit || {}),
+        ...existingConst,
         ...newValue,
-        lastUpdatedAt: formattedSyncTime,
-        lastUpdatedBy: activeUserName,
-        auditorUserId: effectiveUser?.id || 'user',
-        auditorName: activeUserName,
-        auditorEmail: activeUserEmail,
-        auditDateRiyadh: riyadhDateStr,
-        auditTimeRiyadh: riyadhTimeStr,
-        syncStatus: 'محفوظ ومزامن'
+        lastUpdatedAt: isResetConst ? '' : formattedSyncTime,
+        lastUpdatedBy: isResetConst ? '' : activeUserName,
+        auditorUserId: isResetConst ? '' : effectiveUser?.id || 'user',
+        auditorName: isResetConst ? '' : activeUserName,
+        auditorEmail: isResetConst ? '' : activeUserEmail,
+        auditDateRiyadh: isResetConst ? '' : riyadhDateStr,
+        auditTimeRiyadh: isResetConst ? '' : riyadhTimeStr,
+        syncStatus: isResetConst ? 'بانتظار التدقيق' : 'محفوظ ومزامن'
       };
       updated.statusSyncTime = formattedSyncTime;
       updated.statusSyncDateRiyadh = riyadhDateStr;
@@ -1367,6 +1558,15 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
       updated.statusSyncEmail = activeUserEmail;
       updated.statusSyncUser = activeUserName;
       updated.auditSyncStatus = 'محفوظ ومزامن';
+      touchedFields.push(
+        'constructionAudit',
+        'statusSyncTime',
+        'statusSyncDateRiyadh',
+        'statusSyncTimeRiyadh',
+        'statusSyncEmail',
+        'statusSyncUser',
+        'auditSyncStatus'
+      );
     } else if (field === 'procedure155Status') {
       const isQual = String(newValue).includes('مؤهل') && !String(newValue).includes('غير');
       updated.completionPercentage = isQual ? 100 : 75;
@@ -1387,9 +1587,31 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
       updated.statusSyncEmail = activeUserEmail;
       updated.statusSyncUser = activeUserName;
       updated.auditSyncStatus = 'محفوظ ومزامن';
+      touchedFields.push(
+        'procedure155Status',
+        'completionPercentage',
+        'technicalSupportAudit',
+        'statusSyncTime',
+        'statusSyncDateRiyadh',
+        'statusSyncTimeRiyadh',
+        'statusSyncEmail',
+        'statusSyncUser',
+        'auditSyncStatus'
+      );
     }
 
-    // When procedure155 (حالة اجراء 155) is updated by an authorized user, procedureSyncTime & procedureSyncEmail are stamped
+    // When any of the 3 audit columns changes, auto-sync procedure155 if not manually overridden
+    if (field === 'pdcAudit' || field === 'constructionAudit' || field === 'procedure155Status') {
+      const hasManual155 = Boolean(
+        updated.procedureSyncTime || updated.procedureSyncEmail || updated.procedureSyncUser
+      );
+      if (!hasManual155) {
+        updated.procedure155 = isOrderQualified100InAllThreeAudits(updated) ? 'مؤهل لإجراء 155' : '';
+        touchedFields.push('procedure155');
+      }
+    }
+
+    // When procedure155 (حالة اجراء 155) is updated by any user, procedureSyncTime & procedureSyncEmail are stamped
     if (field === 'procedure155') {
       const cleanVal = newValue === '— تفريغ الخلية —' ? '' : String(newValue || '').trim();
       updated.procedure155 = cleanVal;
@@ -1398,22 +1620,33 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
         updated.procedureSyncEmail = activeUserEmail;
         updated.procedureSyncUser = activeUserName;
       } else {
-        updated.procedureSyncTime = '';
-        updated.procedureSyncEmail = '';
-        updated.procedureSyncUser = '';
+        updated.procedureSyncTime = formattedSyncTime;
+        updated.procedureSyncEmail = activeUserEmail;
+        updated.procedureSyncUser = 'MANUAL_EMPTY';
       }
+      touchedFields.push('procedure155', 'procedureSyncTime', 'procedureSyncEmail', 'procedureSyncUser');
     }
+
+    (updated as any)._userTouchedFields = Array.from(new Set(touchedFields));
+    (updated as any)._skipSensitiveConfirm = true;
+    if (field === 'pdcAudit' || field === 'constructionAudit') {
+      (updated as any)._silentToast = true;
+      setActiveAuditModal(prev =>
+        prev && prev.order.id === updated.id ? { ...prev, order: updated } : prev
+      );
+    }
+
     setOpenInlineDropdown(null);
     setEditingQualityNotes(null);
 
     if (onUpdateOrder) {
       await onUpdateOrder(updated);
     } else {
-      await realtime.updateWorkOrder(updated);
+      await realtime.updateWorkOrder(updated, (updated as any)._userTouchedFields);
     }
   };
 
-  // Save Technical Support Audit Checklist (6 items + main procedure155Status) with instant synchronization
+  // Save Technical Support Audit Checklist (9 items + main procedure155Status) with instant synchronization
   const handleSaveTechnicalSupportAudit = async (
     order: WorkOrder,
     payload: TechnicalSupportAuditPayload,
@@ -1453,6 +1686,29 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
 
     const isQual = String(payload.procedure155Status).includes('مؤهل') && !String(payload.procedure155Status).includes('غير');
 
+    const touchedSupportFields = [
+      'meterPhotoDocumentation',
+      'excavationPhotoDocumentation',
+      'equipmentPhotoDocumentation',
+      'overheadPhotoDocumentation',
+      'photoDocumentation',
+      'consultantForms',
+      'consultantClearanceForms',
+      'form190',
+      'form200',
+      'inspectionForm',
+      'attachmentStatus',
+      'procedure155Status',
+      'completionPercentage',
+      'technicalSupportAudit',
+      'statusSyncTime',
+      'statusSyncDateRiyadh',
+      'statusSyncTimeRiyadh',
+      'statusSyncEmail',
+      'statusSyncUser',
+      'auditSyncStatus'
+    ];
+
     const updated: WorkOrder = {
       ...order,
       meterPhotoDocumentation: payload.meterPhotoDocumentation,
@@ -1471,15 +1727,38 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
       technicalSupportAudit: {
         ...(order.technicalSupportAudit || {}),
         status: payload.procedure155Status,
-        auditorUserId: effectiveUser?.id || 'user',
-        auditorName: activeUserName,
-        auditorEmail: activeUserEmail,
-        auditDateRiyadh: riyadhDateStr,
-        auditTimeRiyadh: riyadhTimeStr,
-        lastUpdatedAt: formattedSyncTime,
-        syncStatus: 'محفوظ ومزامن',
-        evaluatedKeys: payload.evaluatedKeys || []
-      },
+        auditorUserId:
+          Array.isArray(payload.evaluatedKeys) && payload.evaluatedKeys.length === 0
+            ? ''
+            : effectiveUser?.id || 'user',
+        auditorName:
+          Array.isArray(payload.evaluatedKeys) && payload.evaluatedKeys.length === 0
+            ? ''
+            : activeUserName,
+        auditorEmail:
+          Array.isArray(payload.evaluatedKeys) && payload.evaluatedKeys.length === 0
+            ? ''
+            : activeUserEmail,
+        auditDateRiyadh:
+          Array.isArray(payload.evaluatedKeys) && payload.evaluatedKeys.length === 0
+            ? ''
+            : riyadhDateStr,
+        auditTimeRiyadh:
+          Array.isArray(payload.evaluatedKeys) && payload.evaluatedKeys.length === 0
+            ? ''
+            : riyadhTimeStr,
+        lastUpdatedAt:
+          Array.isArray(payload.evaluatedKeys) && payload.evaluatedKeys.length === 0
+            ? ''
+            : formattedSyncTime,
+        syncStatus:
+          Array.isArray(payload.evaluatedKeys) && payload.evaluatedKeys.length === 0
+            ? 'بانتظار التدقيق'
+            : 'محفوظ ومزامن',
+        evaluatedKeys: payload.evaluatedKeys || [],
+        supportChecklist: payload.supportChecklist || (order.technicalSupportAudit as any)?.supportChecklist || {},
+        itemUpdatedAt: payload.itemUpdatedAt || (order.technicalSupportAudit as any)?.itemUpdatedAt || {}
+      } as any,
       statusSyncTime: formattedSyncTime,
       statusSyncDateRiyadh: riyadhDateStr,
       statusSyncTimeRiyadh: riyadhTimeStr,
@@ -1493,12 +1772,26 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
       lastEditedAt: now.toISOString()
     };
 
+    const hasManual155 = Boolean(
+      updated.procedureSyncTime || updated.procedureSyncEmail || updated.procedureSyncUser
+    );
+    if (!hasManual155) {
+      updated.procedure155 = isOrderQualified100InAllThreeAudits(updated) ? 'مؤهل لإجراء 155' : '';
+      if (!touchedSupportFields.includes('procedure155')) {
+        touchedSupportFields.push('procedure155');
+      }
+    }
+
+    (updated as any)._userTouchedFields = touchedSupportFields;
+    (updated as any)._skipSensitiveConfirm = true;
+    (updated as any)._silentToast = !shouldClose;
+
     setActiveSupportAuditModal(prev => (shouldClose ? null : prev ? { ...prev, order: updated } : null));
 
     if (onUpdateOrder) {
       await onUpdateOrder(updated);
     } else {
-      await realtime.updateWorkOrder(updated);
+      await realtime.updateWorkOrder(updated, touchedSupportFields);
     }
 
     if (shouldClose) {
@@ -1772,36 +2065,88 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
       color: cs.textColor || undefined
     };
 
-    // A0. عمود ملف الصور (قبل عمود توثيق الصور) - استيراد ومعاينة ملفات PDF وصور مباشرة أونلاين وبطاقة متحركة ورابط SharePoint وحماية برمز سري معتمد
+    // A0. عمود ملف الصور (قبل عمود توثيق الصور) - استيراد ومعاينة ملفات PDF وصور مباشرة أونلاين وبطاقة متحركة ورابط ملف الشير للبحث المباشر عن أمر العمل
     if (col.field === 'photosFile') {
       const files: AttachedInspectionFile[] = order.photosFile || [];
-      const pdfCount = files.filter(f => f.type?.includes('pdf') || f.name?.toLowerCase().endsWith('.pdf')).length;
-      const imgCount = files.length - pdfCount;
+      const cleanWoNumber = String(order.workOrderNumber || '').trim();
+      const directShareSearchUrl = buildSharePointDirectWorkOrderSearchUrl(
+        cleanWoNumber,
+        order.sharepointFolderUrl || SHAREPOINT_AUDIT_URL
+      );
 
       return (
-        <div 
-          onClick={(e) => e.stopPropagation()} 
-          className="flex flex-col gap-1 w-full text-right p-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 shadow-2xs"
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="flex flex-col gap-0.5 w-full text-right p-1 rounded-lg bg-slate-50/90 border border-slate-200 shadow-2xs"
         >
-          {/* 1. Fixed SharePoint Link Button in Every Cell */}
-          <a
-            href={order.sharepointFolderUrl || SHAREPOINT_AUDIT_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="w-full flex items-center justify-between gap-1 px-2 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/70 dark:text-blue-300 dark:hover:bg-blue-900 border border-blue-200 dark:border-blue-600/40 text-[10.5px] font-black transition-colors cursor-pointer group shadow-2xs"
-            title="فتح مجلد متابعة جودة الصور قبل الارفاق في SharePoint"
-          >
-            <div className="flex items-center gap-1.5 truncate">
-              <FolderOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0 group-hover:scale-110 transition-transform" />
-              <span className="truncate">مجلد صور SharePoint</span>
-            </div>
-            <ExternalLink className="w-3 h-3 opacity-60 group-hover:opacity-100 shrink-0 text-blue-600 dark:text-blue-400" />
-          </a>
+          {/* Compact Single-Row Action Bar: ملف الشير (بحث مباشر عن أمر العمل) + البطاقة + رفع */}
+          <div className="flex items-center gap-1 w-full">
+            <a
+              href={directShareSearchUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (cleanWoNumber) {
+                  try {
+                    navigator.clipboard?.writeText(cleanWoNumber);
+                  } catch (_) {}
+                  setExportNotification(
+                    `جارٍ البحث المباشر عن أمر العمل (${cleanWoNumber}) في جميع ملفات الشير والتوجه إليه مباشرة...`
+                  );
+                  setTimeout(() => setExportNotification(null), 3500);
+                }
+                if (files.length === 1) {
+                  setViewerModalFile(files[0]);
+                  setViewerModalOrder(order);
+                }
+              }}
+              className="flex-1 flex items-center justify-between gap-1 px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 text-[9.5px] font-black transition-colors cursor-pointer group min-w-0"
+              title={
+                cleanWoNumber
+                  ? `انقر للبحث المباشر عن أمر العمل (${cleanWoNumber}) في جميع الملفات الموجودة في ملف الشير والتوجه إليه مباشرة`
+                  : 'فتح ملف الشير (مجلد متابعة جودة الصور في SharePoint)'
+              }
+            >
+              <div className="flex items-center gap-1 truncate">
+                <Search className="w-2.5 h-2.5 text-blue-600 shrink-0" />
+                <span className="truncate">
+                  {cleanWoNumber ? `شير (${cleanWoNumber})` : 'ملف الشير'}
+                </span>
+              </div>
+              <ExternalLink className="w-2.5 h-2.5 opacity-70 shrink-0 text-blue-600" />
+            </a>
 
-          {/* 2. Direct Interactive Files Access List (معاينة كاملة مباشرة أونلاين بدون تحميل ومتوافقة مع أي برنامج PDF) */}
+            <button
+              type="button"
+              onClick={() => setFloatingInspectionOrder(order)}
+              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9.5px] font-black border transition-all cursor-pointer shrink-0 ${
+                files.length > 0
+                  ? 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700'
+                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+              }`}
+              title="فتح بطاقة تدقيق ملف الصور والمستندات المتحركة"
+            >
+              <Move className="w-2.5 h-2.5 text-amber-300 shrink-0" />
+              <span>{files.length > 0 ? `(${files.length})` : 'بطاقة'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setCellFileInputOrderId(order.id);
+                cellFileInputRef.current?.click();
+              }}
+              className="p-0.5 px-1 rounded-md bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300 text-[9.5px] font-black cursor-pointer transition-colors shrink-0"
+              title="إرفاق ملف PDF أو صورة لهذا الأمر"
+            >
+              <Plus className="w-3 h-3" />
+            </button>
+          </div>
+
+          {/* Inline compact file pills if files exist */}
           {files.length > 0 && (
-            <div className="flex flex-col gap-1 py-0.5">
+            <div className="flex items-center gap-0.5 flex-wrap">
               {files.slice(0, 2).map((file) => {
                 const isPdf = Boolean(file.type?.includes('pdf') || file.name?.toLowerCase().endsWith('.pdf'));
                 return (
@@ -1812,22 +2157,19 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                       setViewerModalFile(file);
                       setViewerModalOrder(order);
                     }}
-                    className={`w-full flex items-center justify-between gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold border transition-all cursor-pointer shadow-2xs group/f ${
-                      isPdf 
-                        ? 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950/60 dark:text-rose-200 dark:border-rose-800/60'
-                        : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-800/60'
+                    className={`inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[9px] font-bold border transition-all cursor-pointer max-w-[90px] ${
+                      isPdf
+                        ? 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-200'
+                        : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
                     }`}
-                    title={`انقر للمعاينة الكاملة لملف (${file.name}) أونلاين وبدون تحميل ومتوافق مع كافة البرامج`}
+                    title={`معاينة ملف (${file.name})`}
                   >
-                    <div className="flex items-center gap-1 truncate">
-                      {isPdf ? (
-                        <FileText className="w-3 h-3 text-rose-600 shrink-0" />
-                      ) : (
-                        <ImageIcon className="w-3 h-3 text-emerald-600 shrink-0" />
-                      )}
-                      <span className="truncate max-w-[85px]" dir="ltr">{file.name}</span>
-                    </div>
-                    <Eye className="w-3 h-3 opacity-60 group-hover/f:opacity-100 shrink-0" />
+                    {isPdf ? (
+                      <FileText className="w-2.5 h-2.5 text-rose-600 shrink-0" />
+                    ) : (
+                      <ImageIcon className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                    )}
+                    <span className="truncate" dir="ltr">{file.name}</span>
                   </button>
                 );
               })}
@@ -1835,183 +2177,11 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                 <button
                   type="button"
                   onClick={() => setFloatingInspectionOrder(order)}
-                  className="text-[9px] text-blue-600 hover:underline font-bold text-center"
+                  className="text-[8.5px] text-blue-700 font-black px-1 bg-blue-50 rounded border border-blue-200 cursor-pointer"
                 >
-                  +{files.length - 2} ملفات إضافية (عرض الكل)
+                  +{files.length - 2}
                 </button>
               )}
-            </div>
-          )}
-
-          {/* 3. Open Movable Inspection Card Button + Quick Upload */}
-          <div className="flex items-center justify-between gap-1">
-            <button
-              type="button"
-              onClick={() => setFloatingInspectionOrder(order)}
-              className={`flex-1 flex items-center justify-between gap-1 px-1.5 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer shadow-2xs ${
-                files.length > 0
-                  ? 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700 ring-1 ring-slate-600/40'
-                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600'
-              }`}
-              title="فتح بطاقة تدقيق ملف الصور والمستندات (بطاقة منفصلة يمكن تحريكها مستقله في اي مكان)"
-            >
-              <div className="flex items-center gap-1 truncate">
-                <Move className="w-3 h-3 shrink-0 text-amber-300" />
-                <span className="truncate">
-                  {files.length > 0 ? `البطاقة (${files.length})` : 'فتح البطاقة'}
-                </span>
-              </div>
-              <Eye className="w-3 h-3 shrink-0 opacity-70" />
-            </button>
-
-            {/* Quick Upload Button (يحفظ الملف بنفس اسمه المستورد) */}
-            <button
-              type="button"
-              onClick={() => {
-                setCellFileInputOrderId(order.id);
-                cellFileInputRef.current?.click();
-              }}
-              className="p-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 dark:bg-emerald-950 dark:hover:bg-emerald-900 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-600 text-[10px] font-bold cursor-pointer transition-colors shadow-2xs shrink-0"
-              title="إرفاق ملف PDF أو صورة لهذا الأمر بالاسم الأصلي المستورد"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    // A0-b. عمود تدقيق PDC وعمود تدقيق الإنشاءات: أيقونة Check List في منتصف الخلية بالأعلى بجوار نتيجة مؤهل/غير مؤهل الذكية التلقائية حسب ما تم التدقيق عليه، وتحتها فقط الأيقونات المدقق عليها تباعاً
-    if (col.field === 'pdcAudit' || col.field === 'constructionAudit') {
-      const fieldKey = col.field as 'pdcAudit' | 'constructionAudit';
-      const auditData: WorkOrderAuditColumnData = (order[fieldKey] as WorkOrderAuditColumnData) || createEmptyAuditColumnData();
-      const overallSummary = calculateOverallAuditColumnSummary(auditData);
-
-      // تصفية البنود المدقق عليها فقط (ما لم يدقق عليه يظل داخلياً داخل الـ Check List)
-      const evaluatedCategories = AUDIT_CATEGORIES_META
-        .map(cat => {
-          const catData = auditData[cat.key];
-          const catStatus = calculateCategoryAuditStatus(catData, cat.itemCount);
-          return { cat, catStatus };
-        })
-        .filter(({ catStatus }) => catStatus.status !== 'قيد التدقيق');
-
-      // حساب حالة التأهيل ذكياً وتلقائياً بناءً على ما تم التدقيق عليه فعلياً
-      const smartRawStatus =
-        evaluatedCategories.length > 0
-          ? overallSummary.derivedMainStatus
-          : auditData.mainStatus && auditData.mainStatus !== 'غير محدد'
-          ? auditData.mainStatus
-          : overallSummary.derivedMainStatus;
-      const isQualified = smartRawStatus === 'مؤهل';
-      const isNotQualified = smartRawStatus === 'غير مؤهل';
-      const displayStatus = isQualified ? 'مؤهل' : isNotQualified ? 'غير مؤهل' : 'قيد التدقيق';
-
-      return (
-        <div
-          onClick={(e) => {
-            e.stopPropagation();
-            setActiveAuditModal({
-              order,
-              columnField: fieldKey,
-              columnTitle: col.title,
-              initialCategoryKey: null
-            });
-          }}
-          className="flex flex-col gap-1.5 p-2 rounded-xl bg-gradient-to-br from-slate-50 via-blue-50/35 to-indigo-50/40 hover:from-blue-50/60 hover:to-indigo-50/70 border border-slate-300/90 hover:border-blue-400 transition-all cursor-pointer shadow-2xs group/audit w-full min-w-[240px] text-right"
-          title={`انقر لفتح بطاقة تحقق (${col.title}) وعرض قوائم الفحص الرسمية`}
-        >
-          {/* منتصف الخلية من الأعلى: أيقونة Check List وبجوارها أيقونة تفاعلية يظهر فيها تلقائياً (مؤهل - غير مؤهل) حسب ما تم التدقيق عليه */}
-          <div className="flex items-center justify-center gap-2 pb-1.5 border-b border-slate-300/80 w-full">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setActiveAuditModal({
-                  order,
-                  columnField: fieldKey,
-                  columnTitle: col.title,
-                  initialCategoryKey: null
-                });
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-l from-slate-800 to-indigo-950 hover:from-slate-900 hover:to-slate-950 text-white text-[11px] font-black shadow-2xs hover:shadow transition-all cursor-pointer group shrink-0"
-              title={`انقر لفتح قوائم التدقيق (Check List) لعمود ${col.title}`}
-            >
-              <ListChecks className="w-3.5 h-3.5 text-amber-300 group-hover:scale-110 transition-transform" />
-              <span>Check List</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setActiveAuditModal({
-                  order,
-                  columnField: fieldKey,
-                  columnTitle: col.title,
-                  initialCategoryKey: null
-                });
-              }}
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-black border shadow-2xs transition-all cursor-pointer shrink-0 ${
-                isQualified
-                  ? 'bg-gradient-to-r from-emerald-100 to-teal-100/90 hover:from-emerald-200 hover:to-teal-200 text-emerald-950 border-emerald-400 ring-1 ring-emerald-500/20'
-                  : isNotQualified
-                  ? 'bg-gradient-to-r from-rose-100 to-red-100/90 hover:from-rose-200 hover:to-red-200 text-rose-950 border-rose-400 ring-1 ring-rose-500/20'
-                  : 'bg-gradient-to-r from-slate-100 to-blue-100/70 hover:from-slate-200 hover:to-blue-200/70 text-slate-800 border-slate-300'
-              }`}
-              title={`نتيجة التدقيق التلقائية (حسب ما تم تدقيقه): ${displayStatus}`}
-            >
-              {isQualified ? (
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-              ) : isNotQualified ? (
-                <XCircle className="w-3.5 h-3.5 text-rose-700 shrink-0" />
-              ) : (
-                <Clock className="w-3.5 h-3.5 text-slate-700 shrink-0" />
-              )}
-              <span>{displayStatus}</span>
-              {evaluatedCategories.length > 0 && (
-                <span className="font-mono text-[9.5px] font-black">({overallSummary.averageCompliance}%)</span>
-              )}
-            </button>
-          </div>
-
-          {/* تحتها: تظهر الأيقونات المدقق عليها تباعاً فقط ومالم يدقق عليه يظل داخلياً */}
-          {evaluatedCategories.length === 0 ? (
-            <div className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-100/80 border border-dashed border-slate-300 text-slate-700 text-[10px] font-bold">
-              <Sparkles className="w-3 h-3 text-indigo-600" />
-              <span>البنود داخلية • انقر Check List للتدقيق</span>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center justify-center gap-1 w-full pt-0.5">
-              {evaluatedCategories.map(({ cat, catStatus }) => (
-                <button
-                  key={cat.key}
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActiveAuditModal({
-                      order,
-                      columnField: fieldKey,
-                      columnTitle: col.title,
-                      initialCategoryKey: cat.key
-                    });
-                  }}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[9.5px] font-black transition-all hover:scale-105 cursor-pointer shadow-2xs ${
-                    catStatus.status === 'ممتثل'
-                      ? 'bg-emerald-100/90 hover:bg-emerald-200 text-emerald-950 border-emerald-400'
-                      : catStatus.status === 'غير ممتثل'
-                      ? 'bg-rose-100/90 hover:bg-rose-200 text-rose-950 border-rose-400'
-                      : 'bg-amber-100/90 hover:bg-amber-200 text-amber-950 border-amber-400'
-                  }`}
-                  title={`${cat.title}: ${catStatus.status} (${catStatus.compliancePercentage}%)`}
-                >
-                  {renderAuditCategoryIcon(cat.icon, 'w-3 h-3 shrink-0')}
-                  <span className="truncate max-w-[90px]">{cat.title}</span>
-                  {catStatus.status === 'ممتثل' && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-800 shrink-0" />}
-                  {catStatus.status === 'غير ممتثل' && <XCircle className="w-2.5 h-2.5 text-rose-800 shrink-0" />}
-                  {catStatus.status === 'لا ينطبق' && <MinusCircle className="w-2.5 h-2.5 text-amber-800 shrink-0" />}
-                </button>
-              ))}
             </div>
           )}
         </div>
@@ -2022,51 +2192,194 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
     const renderSupportAndAttachmentIcon = (iconName: string) => {
       switch (iconName) {
         case 'meter':
-          return <Gauge className="w-3 h-3 shrink-0" />;
+          return <Gauge className="w-2.5 h-2.5 shrink-0" />;
         case 'excavation':
-          return <Pickaxe className="w-3 h-3 shrink-0" />;
+          return <Pickaxe className="w-2.5 h-2.5 shrink-0" />;
         case 'equipment':
-          return <Boxes className="w-3 h-3 shrink-0" />;
+          return <Boxes className="w-2.5 h-2.5 shrink-0" />;
         case 'overhead':
-          return <Zap className="w-3 h-3 shrink-0" />;
+          return <Zap className="w-2.5 h-2.5 shrink-0" />;
         case 'fileText':
-          return <FileText className="w-3 h-3 shrink-0" />;
+          return <FileText className="w-2.5 h-2.5 shrink-0" />;
         case 'fileCheck':
-          return <FileCheck2 className="w-3 h-3 shrink-0" />;
+          return <FileCheck2 className="w-2.5 h-2.5 shrink-0" />;
         case 'spreadsheet':
-          return <FileSpreadsheet className="w-3 h-3 shrink-0" />;
+          return <FileSpreadsheet className="w-2.5 h-2.5 shrink-0" />;
         case 'layers':
-          return <Layers className="w-3 h-3 shrink-0" />;
+          return <Layers className="w-2.5 h-2.5 shrink-0" />;
         case 'shield':
         default:
-          return <ShieldCheck className="w-3 h-3 shrink-0" />;
+          return <ShieldCheck className="w-2.5 h-2.5 shrink-0" />;
       }
     };
 
-    // A0-b2. عمود حالة الارفاق (attachmentStatus): تظهر فيه الأيقونات تلقائياً ومزامنة 100% مع ظهور الأيقونات المطابقة لها في عمود تدقيق المساندة الفنية
-    if (col.field === 'attachmentStatus') {
-      const checklistMap = extractOrderSupportChecklistMap(order);
-      const evaluatedKeys = getEvaluatedSupportChecklistKeys(order, checklistMap);
+    // A0-b. عمود تدقيق PDC وعمود تدقيق الإنشاءات: فارغ افتراضياً لحين التعبئة مع تزامن فوري 100% مع الـ Check List
+    if (col.field === 'pdcAudit' || col.field === 'constructionAudit') {
+      const fieldKey = col.field as 'pdcAudit' | 'constructionAudit';
+      const rawAudit = order[fieldKey];
+      const auditData: WorkOrderAuditColumnData =
+        rawAudit && typeof rawAudit === 'object'
+          ? (rawAudit as WorkOrderAuditColumnData)
+          : createEmptyAuditColumnData();
+      const checklistMap = extractColumnSupportChecklistMap(order, fieldKey);
+      const evaluatedKeys = getEvaluatedColumnSupportChecklistKeys(order, fieldKey, checklistMap);
       const evaluatedItems = TECHNICAL_SUPPORT_CHECKLIST_ITEMS.filter(item =>
         evaluatedKeys.includes(item.key)
       );
-      const stats = calculateSupportChecklistStats(
-        checklistMap,
-        evaluatedKeys.length > 0 ? evaluatedKeys : undefined
-      );
-      const syncedStatus = deriveSyncedAttachmentStatus(
-        checklistMap,
-        evaluatedKeys.length > 0 ? evaluatedKeys : undefined
-      );
-      const displayVal =
+      const stats = calculateSupportChecklistStats(checklistMap, evaluatedKeys);
+
+      const smartRawStatus =
         evaluatedKeys.length > 0
-          ? syncedStatus
-          : stringValue && stringValue !== 'غير جاهز للارفاق'
-          ? stringValue
-          : 'غير جاهز للارفاق';
-      const isFullReady =
-        displayVal.includes('الكامل') ||
-        (evaluatedKeys.length > 0 && stats.isAllApplicableCompleted);
+          ? stats.isAllApplicableCompleted
+            ? 'مؤهل'
+            : 'غير مؤهل'
+          : auditData.mainStatus === 'مؤهل' || auditData.mainStatus === 'غير مؤهل'
+          ? auditData.mainStatus
+          : '';
+      const isQualified = smartRawStatus === 'مؤهل';
+      const isNotQualified = smartRawStatus === 'غير مؤهل';
+      const hasEvaluatedStatus = isQualified || isNotQualified;
+      const displayStatus = isQualified ? 'مؤهل' : isNotQualified ? 'غير مؤهل' : '';
+
+      return (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            setActiveAuditModal({
+              order,
+              columnField: fieldKey,
+              columnTitle: col.title,
+              initialFocusField: null
+            });
+          }}
+          className={`flex flex-col gap-0.5 px-1.5 py-1 rounded-lg border transition-all cursor-pointer group/audit w-full min-w-[185px] text-right ${
+            hasEvaluatedStatus
+              ? 'bg-gradient-to-br from-slate-50 via-blue-50/35 to-indigo-50/40 hover:from-blue-50/70 hover:to-indigo-50/70 border-slate-300/90 hover:border-blue-400 shadow-2xs'
+              : 'bg-transparent hover:bg-slate-50/80 border-transparent hover:border-slate-300'
+          }`}
+          title={
+            hasEvaluatedStatus
+              ? `انقر لفتح بطاقة تدقيق (${col.title}) — الحالة: ${displayStatus}${evaluatedKeys.length > 0 ? ` (${stats.compliancePercentage}%)` : ''}`
+              : `انقر لتعبئة وتدقيق (${col.title})`
+          }
+        >
+          {/* السطر الأول المدمج: مراحل التدقيق + Check List + النتيجة فقط عند التعبئة */}
+          <div className="flex items-center justify-between gap-1 w-full whitespace-nowrap">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveStagesReferenceModal({
+                  order,
+                  columnTitle: col.title
+                });
+              }}
+              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[#003366] hover:bg-[#002244] text-white border-b border-orange-500 text-[9px] font-black shadow-2xs transition-all cursor-pointer shrink-0 ${
+                hasEvaluatedStatus ? 'opacity-100' : 'opacity-65 group-hover/audit:opacity-100'
+              }`}
+              title="مراحل التدقيق (الاطلاع على القوائم الأساسية الـ 18 وبنودها)"
+            >
+              <BookOpen className="w-2.5 h-2.5 text-amber-300 shrink-0" />
+              <span>مراحل التدقيق</span>
+            </button>
+
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveAuditModal({
+                    order,
+                    columnField: fieldKey,
+                    columnTitle: col.title,
+                    initialFocusField: null
+                  });
+                }}
+                className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-950 text-white text-[9.5px] font-black shadow-2xs transition-all cursor-pointer shrink-0 ${
+                  hasEvaluatedStatus ? 'opacity-100' : 'opacity-65 group-hover/audit:opacity-100'
+                }`}
+                title={`فتح قائمة التدقيق (Check List) لعمود ${col.title}`}
+              >
+                <ListChecks className="w-2.5 h-2.5 text-amber-300 shrink-0" />
+                <span>Check List</span>
+              </button>
+
+              {hasEvaluatedStatus && (
+                <span
+                  className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9.5px] font-black border shadow-2xs shrink-0 ${
+                    isQualified
+                      ? 'bg-emerald-100 text-emerald-950 border-emerald-400'
+                      : 'bg-rose-100 text-rose-950 border-rose-400'
+                  }`}
+                >
+                  {isQualified ? (
+                    <CheckCircle2 className="w-2.5 h-2.5 text-emerald-700 shrink-0" />
+                  ) : (
+                    <XCircle className="w-2.5 h-2.5 text-rose-700 shrink-0" />
+                  )}
+                  <span>{displayStatus}</span>
+                  {evaluatedKeys.length > 0 && (
+                    <span className="font-mono text-[8.5px]">({stats.compliancePercentage}%)</span>
+                  )}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* السطر الثاني المدمج: اختصارات البنود المدققة فقط لمنع التكدس */}
+          {evaluatedItems.length > 0 && (
+            <div className="flex flex-wrap items-center gap-0.5 w-full pt-0.5 border-t border-slate-200/80">
+              {evaluatedItems.map((item) => {
+                const itemVal = checklistMap[item.key];
+                const isCompleted = itemVal === 'مكتمل';
+                const isNA = itemVal === 'لا ينطبق';
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveAuditModal({
+                        order,
+                        columnField: fieldKey,
+                        columnTitle: col.title,
+                        initialFocusField: item.key
+                      });
+                    }}
+                    className={`inline-flex items-center gap-0.5 px-1 py-0.2 rounded border text-[8.5px] font-black transition-all hover:scale-105 cursor-pointer ${
+                      isCompleted
+                        ? 'bg-emerald-100 text-emerald-950 border-emerald-400'
+                        : isNA
+                        ? 'bg-amber-100 text-amber-950 border-amber-400'
+                        : 'bg-rose-100 text-rose-950 border-rose-400'
+                    }`}
+                    title={`${item.title}: ${itemVal}`}
+                  >
+                    {renderSupportAndAttachmentIcon(item.iconName)}
+                    <span>{item.abbrTitle}</span>
+                    <span>{isCompleted ? '✓' : isNA ? '−' : '✗'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // A0-b2. عمود حالة الارفاق (attachmentStatus): فارغ افتراضياً لحين تعبئته أو تدقيق المساندة الفنية
+    if (col.field === 'attachmentStatus') {
+      const checklistMap = extractOrderSupportChecklistMap(order);
+      const evaluatedKeys = getEvaluatedSupportChecklistKeys(order, checklistMap);
+      const evalSet = new Set(evaluatedKeys);
+      const readyItems = TECHNICAL_SUPPORT_CHECKLIST_ITEMS.filter(
+        (item) => evalSet.has(item.key) && checklistMap[item.key] === 'مكتمل'
+      );
+      const stats = calculateSupportChecklistStats(checklistMap, evaluatedKeys);
+      const isFullReady = evaluatedKeys.length > 0 && stats.isAllApplicableCompleted && readyItems.length > 0;
+      const manualAtt = String(order.attachmentStatus || '').trim();
+      const hasManualAttachment = Boolean(manualAtt && manualAtt !== 'غير جاهز للارفاق' && evaluatedKeys.length === 0);
+      const isCellEmpty = evaluatedKeys.length === 0 && !hasManualAttachment;
 
       return (
         <div
@@ -2078,51 +2391,57 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
               viewMode: 'attachment_readonly'
             });
           }}
-          className="flex flex-col gap-1.5 p-2 rounded-xl bg-gradient-to-br from-slate-50 via-teal-50/30 to-emerald-50/35 hover:from-teal-50/50 hover:to-emerald-50/60 border border-slate-300/90 hover:border-teal-400 transition-all shadow-2xs w-full min-w-[240px] text-right cursor-pointer"
-          title="بطاقة حالة الإرفاق: تظهر فيها الأيقونات تلقائياً بالتزامن المباشر مع تدقيق المساندة الفنية"
+          className={`flex flex-col gap-1 px-1.5 py-1 rounded-lg border transition-all w-full min-w-[165px] min-h-[28px] text-right cursor-pointer ${
+            readyItems.length > 0 || hasManualAttachment
+              ? 'bg-gradient-to-br from-emerald-50/70 via-white to-teal-50/50 border-emerald-300 hover:border-emerald-500 shadow-2xs'
+              : isCellEmpty
+              ? 'bg-transparent hover:bg-slate-50/70 border-transparent hover:border-slate-300'
+              : 'bg-rose-50/50 hover:bg-rose-50 border-rose-200 hover:border-rose-300 shadow-2xs'
+          }`}
+          title={
+            readyItems.length > 0
+              ? `الجاهز للإرفاق (${readyItems.length}): ${readyItems.map((i) => i.abbrTitle).join(' ، ')}`
+              : hasManualAttachment
+              ? `حالة الإرفاق: ${manualAtt}`
+              : 'خلية فارغة افتراضياً — تتعبأ تلقائياً عند تدقيق المساندة الفنية'
+          }
         >
-          {/* شريط علوي: حالة الإرفاق الهادئة مع عداد التطابق لما تم تدقيقه */}
-          <div className="flex items-center justify-between gap-1.5 pb-1.5 border-b border-slate-300/80">
-            <div
-              className={`flex-1 flex items-center justify-between gap-1 px-2.5 py-1 rounded-lg text-[10.5px] font-black border shadow-2xs ${
-                isFullReady
-                  ? 'bg-gradient-to-r from-emerald-100 to-teal-100 text-emerald-950 border-emerald-400'
-                  : evaluatedKeys.length > 0 && stats.completedCount > 0
-                  ? 'bg-gradient-to-r from-amber-100 to-orange-100 text-amber-950 border-amber-400'
-                  : 'bg-gradient-to-r from-slate-100 to-blue-100/60 text-slate-900 border-slate-300'
-              }`}
-            >
-              <span className="truncate">{displayVal}</span>
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-slate-900/10 text-slate-900 text-[8.5px] font-black shrink-0">
-                <Link2 className="w-2.5 h-2.5 text-teal-800" />
-                <span>تزامن تلقائي</span>
+          {isCellEmpty ? (
+            <div className="flex items-center justify-between w-full min-h-[20px]">
+              <span className="flex-1" />
+            </div>
+          ) : readyItems.length === 0 && hasManualAttachment ? (
+            <div className="flex items-center justify-between gap-1 whitespace-nowrap">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-black border bg-emerald-100 text-emerald-950 border-emerald-400">
+                <CheckCircle2 className="w-2.5 h-2.5 shrink-0" />
+                <span>{manualAtt}</span>
               </span>
             </div>
-
-            <span
-              className={`text-[9.5px] font-mono font-black px-2 py-0.5 rounded-lg border shrink-0 ${
-                evaluatedKeys.length > 0 && stats.completedCount > 0
-                  ? 'bg-emerald-700 text-white border-emerald-800'
-                  : 'bg-slate-200 text-slate-800 border-slate-300'
-              }`}
-            >
-              {evaluatedKeys.length > 0 ? `${stats.completedCount}/${evaluatedKeys.length} متطابق` : '0/9 مدقق'}
-            </span>
-          </div>
-
-          {/* تحتها: تظهر الأيقونات المطابقة تلقائياً ومزامنة مع أي بند يتم تدقيقه ويظهر في عمود تدقيق المساندة الفنية */}
-          {evaluatedItems.length === 0 ? (
-            <div className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-100/80 border border-dashed border-slate-300 text-slate-700 text-[10px] font-bold">
-              <Link2 className="w-3 h-3 text-teal-700 shrink-0" />
-              <span className="truncate">تظهر الأيقونات تلقائياً مع تدقيق المساندة</span>
+          ) : readyItems.length === 0 ? (
+            <div className="flex items-center justify-between gap-1 px-1 py-0.5 text-[9.5px] font-black text-rose-800">
+              <span className="truncate">غير جاهز للإرفاق</span>
+              <Link2 className="w-2.5 h-2.5 text-rose-500 shrink-0" />
             </div>
           ) : (
-            <div className="flex flex-wrap items-center justify-center gap-1 w-full pt-0.5">
-              {evaluatedItems.map((item) => {
-                const itemVal = checklistMap[item.key];
-                const isCompleted = itemVal === 'مكتمل';
-                const isNA = itemVal === 'لا ينطبق';
-                return (
+            <>
+              <div className="flex items-center justify-between gap-1 whitespace-nowrap">
+                <span
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-black border ${
+                    isFullReady
+                      ? 'bg-emerald-700 text-white border-emerald-800'
+                      : 'bg-emerald-100 text-emerald-950 border-emerald-400'
+                  }`}
+                >
+                  <CheckCircle2 className="w-2.5 h-2.5 shrink-0" />
+                  <span>{isFullReady ? 'جاهز للإرفاق الكامل' : 'جاهز للإرفاق'}</span>
+                </span>
+                <span className="text-[8.5px] font-mono font-black px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-900 border border-emerald-300 shrink-0">
+                  {readyItems.length} جاهز
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-0.5 w-full pt-0.5 border-t border-emerald-200/70">
+                {readyItems.map((item) => (
                   <button
                     key={item.key}
                     type="button"
@@ -2134,48 +2453,48 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                         viewMode: 'attachment_readonly'
                       });
                     }}
-                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[9.5px] font-black transition-all hover:scale-105 cursor-pointer shadow-2xs ${
-                      isCompleted
-                        ? 'bg-emerald-100/95 hover:bg-emerald-200 text-emerald-950 border-emerald-400'
-                        : isNA
-                        ? 'bg-amber-100/95 hover:bg-amber-200 text-amber-950 border-amber-400'
-                        : 'bg-rose-100/95 hover:bg-rose-200 text-rose-950 border-rose-400'
-                    }`}
-                    title={`${item.attachmentTitle} (مرتبط بـ ${item.title}): ${isCompleted ? 'متطابق ومكتمل ✓' : itemVal}`}
+                    className="inline-flex items-center justify-between gap-0.5 px-1.5 py-0.5 rounded bg-white hover:bg-emerald-50 text-emerald-950 border border-emerald-300 text-[8.5px] font-black transition-all cursor-pointer truncate shadow-2xs"
+                    title={`${item.attachmentTitle}: جاهز للإرفاق ✓`}
                   >
-                    {renderSupportAndAttachmentIcon(item.iconName)}
-                    <span className="truncate max-w-[95px]">{item.attachmentShortTitle}</span>
-                    {isCompleted && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-800 shrink-0" />}
-                    {!isCompleted && !isNA && <XCircle className="w-2.5 h-2.5 text-rose-800 shrink-0" />}
-                    {isNA && <MinusCircle className="w-2.5 h-2.5 text-amber-800 shrink-0" />}
+                    <span className="inline-flex items-center gap-0.5 truncate">
+                      {renderSupportAndAttachmentIcon(item.iconName)}
+                      <span className="truncate">{item.abbrTitle}</span>
+                    </span>
+                    <span className="text-emerald-700 font-black shrink-0">✓</span>
                   </button>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       );
     }
 
-    // A0-c. عمود تدقيق المساندة الفنية (procedure155Status): أيقونة Check List في منتصف الخلية بالأعلى بجوار نتيجة مؤهل/غير مؤهل الذكية التلقائية حسب ما تم التدقيق عليه، وتحتها فقط الأيقونات المدقق عليها تباعاً
+    // A0-c. عمود تدقيق المساندة الفنية (procedure155Status): فارغ افتراضياً لحين التدقيق الفعلي
     if (col.field === 'procedure155Status') {
       const checklistMap = extractOrderSupportChecklistMap(order);
       const evaluatedKeys = getEvaluatedSupportChecklistKeys(order, checklistMap);
       const evaluatedItems = TECHNICAL_SUPPORT_CHECKLIST_ITEMS.filter(item =>
         evaluatedKeys.includes(item.key)
       );
-      const stats = calculateSupportChecklistStats(
-        checklistMap,
-        evaluatedKeys.length > 0 ? evaluatedKeys : undefined
-      );
+      const stats = calculateSupportChecklistStats(checklistMap, evaluatedKeys);
 
-      const rawMainStatus = String(order.procedure155Status || '');
-      const isQualified155 =
-        evaluatedKeys.length > 0
-          ? stats.isAllApplicableCompleted
-          : !rawMainStatus.includes('غير') &&
-            (rawMainStatus.includes('مؤهل') || rawMainStatus.includes('معتمد') || rawMainStatus.includes('تم'));
-      const displayMainStatus = isQualified155 ? 'مؤهل' : 'غير مؤهل';
+      const hasEvaluated155 = evaluatedKeys.length > 0;
+      const rawMainStatus = String(order.procedure155Status || '').trim();
+      const hasExplicitManualStatus = Boolean(
+        rawMainStatus &&
+        rawMainStatus !== 'قيد التدقيق' &&
+        rawMainStatus !== 'قيد التدقيق الفني'
+      );
+      const hasAnyStatus155 = hasEvaluated155 || hasExplicitManualStatus;
+      const isQualified155 = hasEvaluated155
+        ? stats.isAllApplicableCompleted && !rawMainStatus.includes('غير مؤهل')
+        : hasExplicitManualStatus && !rawMainStatus.includes('غير') && (rawMainStatus.includes('مؤهل') || rawMainStatus.includes('معتمد'));
+      const displayMainStatus = !hasAnyStatus155
+        ? ''
+        : isQualified155
+        ? 'مؤهل'
+        : 'غير مؤهل';
 
       return (
         <div
@@ -2186,11 +2505,18 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
               focusField: null
             });
           }}
-          className="flex flex-col gap-1.5 p-2 rounded-xl bg-gradient-to-br from-slate-50 via-blue-50/35 to-indigo-50/40 hover:from-blue-50/60 hover:to-indigo-50/70 border border-slate-300/90 hover:border-blue-400 transition-all cursor-pointer shadow-2xs group/support w-full min-w-[240px] text-right"
-          title="انقر لفتح بطاقة تدقيق المساندة الفنية (Check List)"
+          className={`flex flex-col gap-0.5 px-1.5 py-1 rounded-lg border transition-all cursor-pointer group/support w-full min-w-[175px] text-right ${
+            hasAnyStatus155
+              ? 'bg-gradient-to-br from-slate-50 via-blue-50/35 to-indigo-50/40 hover:from-blue-50/70 hover:to-indigo-50/70 border-slate-300/90 hover:border-blue-400 shadow-2xs'
+              : 'bg-transparent hover:bg-slate-50/80 border-transparent hover:border-slate-300'
+          }`}
+          title={
+            hasAnyStatus155
+              ? `بطاقة تدقيق المساندة الفنية (Check List) — النتيجة: ${displayMainStatus}${hasEvaluated155 ? ` (${stats.compliancePercentage}%)` : ''}`
+              : 'انقر لفتح بطاقة تدقيق المساندة الفنية (Check List)'
+          }
         >
-          {/* منتصف الخلية من الأعلى: أيقونة Check List وبجوارها أيقونة تفاعلية يظهر فيها تلقائياً (مؤهل - غير مؤهل) حسب ما تم التدقيق عليه */}
-          <div className="flex items-center justify-center gap-2 pb-1.5 border-b border-slate-300/80 w-full">
+          <div className="flex items-center justify-between gap-1 w-full whitespace-nowrap">
             <button
               type="button"
               onClick={(e) => {
@@ -2200,49 +2526,38 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                   focusField: null
                 });
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-l from-slate-800 to-indigo-950 hover:from-slate-900 hover:to-slate-950 text-white text-[11px] font-black shadow-2xs hover:shadow transition-all cursor-pointer group shrink-0"
-              title="انقر لفتح قوائم تدقيق المساندة الفنية (Check List)"
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-950 text-white text-[9.5px] font-black shadow-2xs transition-all cursor-pointer shrink-0 ${
+                hasAnyStatus155 ? 'opacity-100' : 'opacity-65 group-hover/support:opacity-100'
+              }`}
+              title="فتح قوائم تدقيق المساندة الفنية (Check List)"
             >
-              <ListChecks className="w-3.5 h-3.5 text-amber-300 group-hover:scale-110 transition-transform" />
+              <ListChecks className="w-2.5 h-2.5 text-amber-300 shrink-0" />
               <span>Check List</span>
             </button>
 
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setActiveSupportAuditModal({
-                  order,
-                  focusField: null
-                });
-              }}
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-black border shadow-2xs transition-all cursor-pointer shrink-0 ${
-                isQualified155
-                  ? 'bg-gradient-to-r from-emerald-100 to-teal-100/90 hover:from-emerald-200 hover:to-teal-200 text-emerald-950 border-emerald-400 ring-1 ring-emerald-500/20'
-                  : 'bg-gradient-to-r from-rose-100 to-red-100/90 hover:from-rose-200 hover:to-red-200 text-rose-950 border-rose-400 ring-1 ring-rose-500/20'
-              }`}
-              title={`نتيجة التدقيق التلقائية (حسب ما تم تدقيقه): ${displayMainStatus}`}
-            >
-              {isQualified155 ? (
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-              ) : (
-                <XCircle className="w-3.5 h-3.5 text-rose-700 shrink-0" />
-              )}
-              <span>{displayMainStatus}</span>
-              {evaluatedKeys.length > 0 && (
-                <span className="font-mono text-[9.5px] font-black">({stats.compliancePercentage}%)</span>
-              )}
-            </button>
+            {hasAnyStatus155 && (
+              <span
+                className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[9.5px] font-black border shadow-2xs shrink-0 ${
+                  isQualified155
+                    ? 'bg-emerald-100 text-emerald-950 border-emerald-400'
+                    : 'bg-rose-100 text-rose-950 border-rose-400'
+                }`}
+              >
+                {isQualified155 ? (
+                  <CheckCircle2 className="w-2.5 h-2.5 text-emerald-700 shrink-0" />
+                ) : (
+                  <XCircle className="w-2.5 h-2.5 text-rose-700 shrink-0" />
+                )}
+                <span>{displayMainStatus}</span>
+                {hasEvaluated155 && (
+                  <span className="font-mono text-[8.5px]">({stats.compliancePercentage}%)</span>
+                )}
+              </span>
+            )}
           </div>
 
-          {/* تحتها: تظهر الأيقونات المدقق عليها تباعاً فقط ومالم يدقق عليه يظل داخلياً */}
-          {evaluatedItems.length === 0 ? (
-            <div className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-slate-100/80 border border-dashed border-slate-300 text-slate-700 text-[10px] font-bold">
-              <Sparkles className="w-3 h-3 text-indigo-600" />
-              <span>البنود داخلية • انقر Check List للتدقيق</span>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center justify-center gap-1 w-full pt-0.5">
+          {evaluatedItems.length > 0 && (
+            <div className="flex flex-wrap items-center gap-0.5 w-full pt-0.5 border-t border-slate-200/80">
               {evaluatedItems.map((item) => {
                 const itemVal = checklistMap[item.key];
                 const isCompleted = itemVal === 'مكتمل';
@@ -2258,20 +2573,18 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                         focusField: item.key
                       });
                     }}
-                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[9.5px] font-black transition-all hover:scale-105 cursor-pointer shadow-2xs ${
+                    className={`inline-flex items-center gap-0.5 px-1 py-0.2 rounded border text-[8.5px] font-black transition-all hover:scale-105 cursor-pointer ${
                       isCompleted
-                        ? 'bg-emerald-100/95 hover:bg-emerald-200 text-emerald-950 border-emerald-400'
+                        ? 'bg-emerald-100 text-emerald-950 border-emerald-400'
                         : isNA
-                        ? 'bg-amber-100/95 hover:bg-amber-200 text-amber-950 border-amber-400'
-                        : 'bg-rose-100/95 hover:bg-rose-200 text-rose-950 border-rose-400'
+                        ? 'bg-amber-100 text-amber-950 border-amber-400'
+                        : 'bg-rose-100 text-rose-950 border-rose-400'
                     }`}
-                    title={`${item.title}: ${itemVal} (يتزامن تلقائياً مع ${item.attachmentShortTitle})`}
+                    title={`${item.title}: ${itemVal} (يتزامن تلقائياً مع ${item.attachmentTitle})`}
                   >
                     {renderSupportAndAttachmentIcon(item.iconName)}
-                    <span className="truncate max-w-[90px]">{item.shortTitle}</span>
-                    {isCompleted && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-800 shrink-0" />}
-                    {!isCompleted && !isNA && <XCircle className="w-2.5 h-2.5 text-rose-800 shrink-0" />}
-                    {isNA && <MinusCircle className="w-2.5 h-2.5 text-amber-800 shrink-0" />}
+                    <span>{item.abbrTitle}</span>
+                    <span>{isCompleted ? '✓' : isNA ? '−' : '✗'}</span>
                   </button>
                 );
               })}
@@ -2299,8 +2612,18 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
     if (isDropdownColumn) {
       let options: string[] = [];
       const dKey = col.dropdownKey || col.field;
-      if (col.field === 'procedure155Status') {
-        options = ['مؤهل للاغلاق ( معتمد )', 'غير مؤهل للأغلاق', 'مؤهل للاغلاق', 'غير مؤهل للاغلاق'];
+      if (col.field === 'procedure155') {
+        options = [
+          'تم الاجراء',
+          'مؤهل لإجراء 155',
+          'غير مؤهل لإجراء 155',
+          'مؤهل للاغلاق ( معتمد )',
+          'غير مؤهل للأغلاق',
+          'قيد الإجراء',
+          '— تفريغ الخلية —'
+        ];
+      } else if (col.field === 'procedure155Status') {
+        options = ['قيد التدقيق', 'مؤهل للاغلاق ( معتمد )', 'غير مؤهل للأغلاق', 'مؤهل للاغلاق', 'غير مؤهل للاغلاق'];
       } else if (col.field === 'attachmentStatus') {
         options = dropdownOptions.attachmentStatus && dropdownOptions.attachmentStatus.length > 0
           ? dropdownOptions.attachmentStatus
@@ -2336,7 +2659,10 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
         options = ['مكتمل', 'غير مكتمل', 'مكتمل مع ملاحظات', 'ملاحظات'];
       }
 
-      const displayVal = stringValue || (col.field === 'procedure155Status' ? 'مؤهل للاغلاق ( معتمد )' : col.field === 'attachmentStatus' ? 'غير جاهز للارفاق' : isStatusColumn ? 'غير مكتمل' : '(فارغ)');
+      const effectiveProc155 = col.field === 'procedure155' ? getEffectiveProcedure155Status(order) : '';
+      const displayVal = col.field === 'procedure155'
+        ? (effectiveProc155 || stringValue || '(فارغ)')
+        : stringValue || (col.field === 'procedure155Status' ? 'قيد التدقيق' : col.field === 'attachmentStatus' ? 'غير جاهز للارفاق' : isStatusColumn ? 'غير مكتمل' : '(فارغ)');
       const isQualified155 = col.field === 'procedure155Status' 
         ? !displayVal.includes('غير') && (displayVal.includes('مؤهل') || displayVal.includes('معتمد') || displayVal.includes('تم'))
         : false;
@@ -2439,19 +2765,16 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
 
           {col.field === 'consultant' && (adderEmail || adderName) && (
             <div
-              className="flex flex-col items-center justify-center gap-0.5 px-2 py-1 rounded-md bg-blue-50/95 border border-blue-200 text-[10px] font-bold text-blue-950 shadow-2xs"
+              className="flex items-center justify-center gap-1 px-1.5 py-0.5 rounded bg-blue-50/95 border border-blue-200 text-[9px] font-bold text-blue-950 truncate"
               title={`مدخل البيانات: ${adderName ? `${adderName} — ` : ''}${adderEmail}`}
             >
               {adderName && (
-                <div className="flex items-center justify-center gap-1 w-full truncate text-slate-900 font-black">
-                  <span className="truncate">{adderName}</span>
-                </div>
+                <span className="truncate text-slate-900 font-black max-w-[85px]">{adderName}</span>
               )}
               {adderEmail && (
-                <div className="flex items-center justify-center gap-1 w-full truncate font-mono text-blue-800" dir="ltr">
-                  <Mail className="w-2.5 h-2.5 text-blue-600 shrink-0" />
-                  <span className="truncate">{adderEmail}</span>
-                </div>
+                <span className="truncate font-mono text-blue-800 max-w-[95px]" dir="ltr">
+                  {adderEmail.split('@')[0]}
+                </span>
               )}
             </div>
           )}
@@ -2461,10 +2784,18 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
 
     // B. Quality Notes: Direct Inline Edit with Elementized Notes & Photos
     if (col.field === 'qualityNotes') {
-      const noteItems = order.qualityNoteItems && order.qualityNoteItems.length > 0
-        ? order.qualityNoteItems
-        : null;
-      const notesText = (stringValue || order.executionNotes || '').trim();
+      const rawNoteItems = order.qualityNoteItems && order.qualityNoteItems.length > 0
+        ? order.qualityNoteItems.filter((it) => {
+            const t = String(it?.text || '').trim();
+            return Boolean(t && t !== '-' && t !== 'لا توجد ملاحظات' && t !== 'لا توجد ملاحظات حالياً' && t !== 'بدون ملاحظات');
+          })
+        : [];
+      const noteItems = rawNoteItems.length > 0 ? rawNoteItems : null;
+      const rawText = (stringValue || order.executionNotes || '').trim();
+      const notesText =
+        rawText === '-' || rawText === 'لا توجد ملاحظات' || rawText === 'لا توجد ملاحظات حالياً' || rawText === 'بدون ملاحظات'
+          ? ''
+          : rawText;
 
       const openNotesEditor = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -2507,285 +2838,206 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
               data-quality-notes-trigger="true"
               data-cell-trigger={`${order.id}-qualityNotes`}
               onClick={() => handleOpenItemizer(order)}
-              className="w-full text-right p-1.5 rounded-xl border border-dashed transition-all cursor-pointer flex items-center justify-between gap-1 group/empty bg-red-50/50 hover:bg-red-100/70 border-red-200 text-red-600"
-              title="لا توجد ملاحظات - انقر لإضافة ملاحظة وصور توضيحية مباشرة من الجدول"
+              className="w-full min-h-[26px] text-right px-2 py-1 rounded-lg border border-transparent hover:border-slate-300 hover:bg-slate-50/70 transition-all cursor-pointer flex items-center justify-between"
+              title="انقر لإدخال ملاحظة أو إرفاق صور توضيحية"
             >
-              <span className="text-[11px] font-bold italic opacity-95">
-                + إضافة ملاحظة / إرفاق صور
-              </span>
-              <Plus className="w-3.5 h-3.5 opacity-70 group-hover/empty:opacity-100 shrink-0" />
+              <span className="flex-1" />
             </button>
           </div>
         );
       }
 
-      // If we have elementized note items
+      // If we have elementized note items: compact view showing first 2 notes with +N badge to prevent row crowding
       if (noteItems && noteItems.length > 0) {
+        const totalPhotosCount = noteItems.reduce((acc, it) => acc + (it.photos?.length || 0), 0);
         return (
-          <div className="relative w-full space-y-1.5 py-0.5">
-            <div className="flex items-center justify-between gap-1 mb-1">
-              <span className="text-[10px] font-black bg-red-700 text-white px-1.5 py-0.5 rounded shadow-2xs">
-                ملاحظات مجدولة ({noteItems.length})
+          <div className="relative w-full space-y-1 py-0.5">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[9.5px] font-black bg-red-700 text-white px-1.5 py-0.2 rounded shadow-2xs shrink-0">
+                ملاحظات ({noteItems.length})
               </span>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-0.5 shrink-0">
                 <button
                   type="button"
                   onClick={(e) => handleCopy(noteItems.map((n, i) => `${i + 1}. ${n.text}`).join('\n'), cellKey, e)}
-                  className={`px-1.5 py-0.5 rounded text-[9px] font-black transition-all cursor-pointer ${
+                  className={`px-1 py-0.2 rounded text-[8.5px] font-black transition-all cursor-pointer ${
                     isCopied ? 'bg-emerald-600 text-white' : 'bg-red-100 hover:bg-red-200 text-red-800'
                   }`}
                   title="نسخ كافة الملاحظات"
                 >
-                  {isCopied ? 'تم النسخ' : 'نسخ الكل'}
+                  {isCopied ? 'نُسخ' : 'نسخ'}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleOpenItemizer(order)}
-                  className="px-1.5 py-0.5 rounded bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[10px] font-black cursor-pointer flex items-center gap-1"
+                  className="px-1 py-0.2 rounded bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-[8.5px] font-black cursor-pointer flex items-center gap-0.5"
                   title="عنصرة الملاحظات وإرفاق الصور التوضيحية"
                 >
-                  <Camera className="w-3 h-3 text-amber-700" />
-                  <span>الصور</span>
+                  <Camera className="w-2.5 h-2.5 text-amber-700" />
+                  <span>{totalPhotosCount > 0 ? totalPhotosCount : 'صور'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleOpenItemizer(order)}
-                  className="px-1.5 py-0.5 rounded bg-red-100 hover:bg-red-200 text-red-800 text-[10px] font-black cursor-pointer flex items-center gap-0.5"
-                  title="إضافة ملاحظة جديدة أو تعديل"
+                  className="p-0.5 rounded bg-red-100 hover:bg-red-200 text-red-800 text-[9px] font-black cursor-pointer"
+                  title="تعديل وإضافة ملاحظات"
                 >
-                  <Plus className="w-3 h-3 text-red-700" />
-                  <span>+ ملاحظة</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleOpenItemizer(order)}
-                  className="p-1 rounded bg-red-100 hover:bg-red-200 text-red-800 text-[10px] font-black cursor-pointer"
-                  title="تعديل الملاحظات والصور"
-                >
-                  <Edit3 className="w-3 h-3 text-red-700" />
+                  <Edit3 className="w-2.5 h-2.5 text-red-700" />
                 </button>
               </div>
             </div>
 
-            {noteItems.map((item, idx) => (
+            {noteItems.slice(0, 2).map((item, idx) => (
               <div
                 key={item.id || idx}
-                className="rounded-xl p-2 bg-red-50/90 border border-red-200/90 text-red-700 text-xs shadow-2xs space-y-1"
+                onClick={(e) => handleCopy(item.text, `${cellKey}-${idx}`, e)}
+                className="flex items-center justify-between gap-1 rounded-md px-1.5 py-0.5 bg-red-50/90 border border-red-200/90 text-red-800 text-[10px] font-black cursor-pointer hover:bg-red-100/80"
+                title={`${ idx + 1 }. ${item.text}${item.authorName || item.authorEmail ? ` — (${item.authorName || item.authorEmail})` : ''}`}
               >
-                <div className="flex items-center justify-between gap-1">
-                  <span className="inline-flex items-center gap-1 text-[10px] font-black text-red-800 bg-red-200/80 px-1.5 py-0.2 rounded font-mono">
-                    ملاحظة {idx + 1}
-                  </span>
-                  <div className="flex items-center gap-1">
-                    {item.photos && item.photos.length > 0 && (
-                      <span className="text-[9px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200 flex items-center gap-0.5">
-                        <Camera className="w-2.5 h-2.5 text-amber-600" />
-                        <span>{item.photos.length}</span>
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={(e) => handleCopy(item.text, `${cellKey}-${idx}`, e)}
-                      className="text-[9px] font-bold text-red-600 hover:text-red-900 cursor-pointer"
-                      title="نسخ هذه الملاحظة"
-                    >
-                      نسخ
-                    </button>
-                  </div>
-                </div>
-                <div 
-                  onClick={(e) => handleCopy(item.text, `${cellKey}-${idx}`, e)}
-                  className={`font-black text-red-800 select-all leading-relaxed cursor-pointer ${
-                    isWrapTextEnabled ? 'break-words whitespace-normal' : 'truncate whitespace-nowrap'
-                  }`}
-                  title={item.text}
-                >
-                  {item.text}
-                </div>
-                {/* Section 8: Verified Author Name, Email, Creation Timestamp & Edit History Badge */}
-                {(item.authorEmail || item.authorName || item.author || item.createdAtRiyadh || item.createdAt) && (
-                  <div className="pt-1 border-t border-red-200/70 flex flex-col gap-0.5 text-[9.5px] text-slate-700">
-                    <div className="flex flex-wrap items-center justify-between gap-1">
-                      <span className="font-bold text-[#003366]">👤 {item.authorName || item.author || 'مستخدم معتمد'}</span>
-                      <span className="font-mono text-slate-500">{item.createdAtRiyadh || item.createdAt}</span>
-                    </div>
-                    {item.authorEmail && (
-                      <div className="font-mono text-blue-800 truncate" dir="ltr">
-                        ✉️ {item.authorEmail}
-                      </div>
-                    )}
-                    {Array.isArray(item.editHistory) && item.editHistory.length > 0 && (
-                      <div className="text-[9px] font-bold text-amber-800 bg-amber-100/80 px-1.5 py-0.2 rounded border border-amber-300">
-                        سجل التعديلات: {item.editHistory.length} (آخر تعديل: {item.updatedByEmail || item.editHistory[0]?.editorEmail})
-                      </div>
-                    )}
-                  </div>
-                )}
+                <span className="truncate flex-1">
+                  {idx + 1}. {item.text}
+                </span>
                 {item.photos && item.photos.length > 0 && (
-                  <div className="flex items-center gap-1.5 pt-1 overflow-x-auto">
-                    {item.photos.map((photoUrl, pIdx) => (
-                      <button
-                        key={pIdx}
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onViewPhotos(order);
-                        }}
-                        className="relative group/ph rounded-lg overflow-hidden border border-red-300 hover:border-red-500 shadow-2xs shrink-0 cursor-pointer"
-                        title="انقر لتكبير صورة الملاحظة"
-                      >
-                        <img
-                          src={photoUrl}
-                          alt={`صورة ملاحظة ${idx + 1}`}
-                          className="w-8 h-8 object-cover group-hover/ph:scale-110 transition-transform"
-                        />
-                        <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/ph:opacity-100 transition-opacity flex items-center justify-center">
-                          <Camera className="w-3 h-3 text-white" />
-                        </div>
-                      </button>
-                    ))}
-                    <span className="text-[9px] font-bold text-red-600">
-                      ({item.photos.length} صور)
-                    </span>
-                  </div>
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onViewPhotos(order);
+                    }}
+                    className="text-[8.5px] font-bold text-amber-800 bg-amber-50 px-1 rounded border border-amber-200 flex items-center gap-0.5 shrink-0"
+                  >
+                    <Camera className="w-2 h-2 text-amber-600" />
+                    <span>{item.photos.length}</span>
+                  </span>
                 )}
               </div>
             ))}
+            {noteItems.length > 2 && (
+              <button
+                type="button"
+                onClick={() => handleOpenItemizer(order)}
+                className="w-full text-center text-[9px] font-black text-red-800 bg-red-100/80 hover:bg-red-200/80 py-0.2 rounded border border-red-200 cursor-pointer"
+              >
+                +{noteItems.length - 2} ملاحظات إضافية (عرض الكل)
+              </button>
+            )}
           </div>
         );
       }
 
-      // Single note card fallback
-      const singlePhotos = order.photos?.filter(p => p.caption?.includes('ملاحظة') || p.stage === 'فحص الجودة') || [];
+      // Single note card fallback (compact)
       return (
         <div className="relative w-full">
           <div
             data-quality-notes-trigger="true"
             data-cell-trigger={`${order.id}-qualityNotes`}
-            className="w-full rounded-xl p-2 transition-all shadow-2xs border bg-red-50/90 hover:bg-red-100/90 border-red-200/90 text-red-700"
+            className="w-full rounded-lg px-2 py-1 transition-all shadow-2xs border bg-red-50/90 hover:bg-red-100/90 border-red-200/90 text-red-700"
           >
-            {/* Header of the Red Note Card with Category Badge and Action Buttons */}
-            <div className="flex items-center justify-between gap-1 mb-1 pb-1 border-b border-red-200/70">
-              <span className="inline-flex items-center gap-1 text-[10px] font-black text-red-700 bg-red-100/80 px-1.5 py-0.5 rounded-md border border-red-200">
-                <AlertCircle className="w-3 h-3 text-red-600 shrink-0" />
+            <div className="flex items-center justify-between gap-1 mb-0.5">
+              <span className="inline-flex items-center gap-0.5 text-[9px] font-black text-red-700 bg-red-100/80 px-1 py-0.2 rounded border border-red-200">
+                <AlertCircle className="w-2.5 h-2.5 text-red-600 shrink-0" />
                 <span>ملاحظة</span>
               </span>
 
-              {/* Action buttons: Dedicated Copy Button + Add Photo + Edit Button */}
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex items-center gap-0.5 shrink-0">
                 <button
                   type="button"
                   onClick={() => handleOpenItemizer(order)}
-                  className="px-1.5 py-0.5 rounded bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black transition-colors cursor-pointer shadow-2xs flex items-center gap-1"
+                  className="px-1 py-0.2 rounded bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-black transition-colors cursor-pointer flex items-center gap-0.5"
                   title="إرفاق صورة للملاحظة أو عنصرة الملاحظات"
                 >
-                  <Camera className="w-3 h-3 text-amber-700" />
-                  <span>+ صورة</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleOpenItemizer(order)}
-                  className="px-1.5 py-0.5 rounded bg-white hover:bg-red-100 text-red-800 border border-red-200 text-[10px] font-black transition-colors cursor-pointer shadow-2xs flex items-center gap-0.5"
-                  title="إضافة ملاحظة جديدة أو تعديل"
-                >
-                  <Plus className="w-3 h-3 text-red-700" />
-                  <span>+ ملاحظة</span>
+                  <Camera className="w-2.5 h-2.5 text-amber-700" />
+                  <span>{order.photos && order.photos.length > 0 ? order.photos.length : '+صورة'}</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={(e) => handleCopy(notesText, cellKey, e)}
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-black transition-all cursor-pointer shadow-2xs ${
+                  className={`inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[9px] font-black transition-all cursor-pointer ${
                     isCopied
                       ? 'bg-emerald-600 text-white'
                       : 'bg-white hover:bg-red-100 text-red-700 border border-red-200'
                   }`}
-                  title="نسخ نص الملاحظة إلى الحافظة"
+                  title="نسخ نص الملاحظة"
                 >
-                  {isCopied ? <Check className="w-3 h-3 text-white" /> : <Copy className="w-3 h-3" />}
-                  <span>{isCopied ? 'تم النسخ' : 'نسخ'}</span>
+                  {isCopied ? <Check className="w-2.5 h-2.5 text-white" /> : <Copy className="w-2.5 h-2.5" />}
+                  <span>{isCopied ? 'نُسخ' : 'نسخ'}</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => handleOpenItemizer(order)}
-                  className="p-1 rounded bg-white hover:bg-red-100 text-red-700 border border-red-200 text-[10px] font-black transition-colors cursor-pointer shadow-2xs"
+                  className="p-0.5 rounded bg-white hover:bg-red-100 text-red-700 border border-red-200 text-[9px] font-black transition-colors cursor-pointer"
                   title="عنصرة وتعديل الملاحظة والصور"
                 >
-                  <Edit3 className="w-3 h-3 text-red-600" />
+                  <Edit3 className="w-2.5 h-2.5 text-red-600" />
                 </button>
               </div>
             </div>
 
-            {/* Note Text: Bold Red Font with Direct Click-to-Copy */}
             <div
               onClick={(e) => handleCopy(notesText, cellKey, e)}
-              className={`text-xs font-black text-red-700 select-all leading-relaxed cursor-pointer hover:text-red-900 ${
-                isWrapTextEnabled ? 'break-words whitespace-normal' : 'truncate max-w-[240px] whitespace-nowrap'
-              }`}
+              className="text-[10.5px] font-black text-red-700 select-all truncate max-w-[220px] cursor-pointer hover:text-red-900"
               title={`${notesText} (انقر لنسخ الملاحظة)`}
             >
               {notesText}
             </div>
-
-            {/* If order has photos attached to notes */}
-            {order.photos && order.photos.length > 0 && (
-              <div className="flex items-center gap-1.5 pt-1 mt-1 border-t border-red-200/50 overflow-x-auto">
-                {order.photos.slice(0, 3).map((ph, idx) => (
-                  <button
-                    key={ph.id || idx}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (onCheckPermission && !onCheckPermission('viewPhotos', 'استعراض الصور والمرفقات')) {
-                        return;
-                      }
-                      onViewPhotos(order);
-                    }}
-                    className="w-7 h-7 rounded-md overflow-hidden border border-red-300 hover:border-red-500 shrink-0 cursor-pointer"
-                    title="معاينة الصورة"
-                  >
-                    <img src={ph.url} alt="ملاحظة" className="w-full h-full object-cover" />
-                  </button>
-                ))}
-                <span className="text-[9px] font-bold text-red-600">
-                  {order.photos.length} صورة مرفقة
-                </span>
-              </div>
-            )}
           </div>
         </div>
       );
     }
 
-    // C1. Audit Sync Column (مزامنة التدقيق: عرض المزامنة لأعمدة التدقيق الثلاثة في 3 أسطر بالترتيب داخل بطاقة بها شريط سحب أفقي ورأسي بدقة متناهية)
+    // C1. Audit Sync Column (مزامنة التدقيق: فارغ افتراضياً لحين إجراء تدقيق فعلي لأي من الإدارات الثلاث)
     if (col.field === 'statusSyncTime') {
-      // 1. Line 1 Data: تدقيق PDC (pdcAudit)
-      const pdcData = order.pdcAudit || {};
-      const pdcStatus = pdcData.mainStatus || 'غير محدد';
+      const pdcData = order.pdcAudit && typeof order.pdcAudit === 'object' ? order.pdcAudit : ({} as any);
+      const pdcEval = getEvaluatedColumnSupportChecklistKeys(order, 'pdcAudit');
+      const pdcStats = calculateSupportChecklistStats(extractColumnSupportChecklistMap(order, 'pdcAudit'), pdcEval);
+      const pdcStatus =
+        pdcEval.length > 0
+          ? pdcStats.isAllApplicableCompleted
+            ? 'مؤهل'
+            : 'غير مؤهل'
+          : pdcData.mainStatus === 'مؤهل' || pdcData.mainStatus === 'غير مؤهل'
+          ? pdcData.mainStatus
+          : '';
       const pdcDate = pdcData.auditDateRiyadh || (pdcData.lastUpdatedAt ? String(pdcData.lastUpdatedAt).split(' ')[0] : '');
       const pdcTime = pdcData.auditTimeRiyadh || (pdcData.lastUpdatedAt ? String(pdcData.lastUpdatedAt).split(' ').slice(1).join(' ') : '');
       const pdcEmail = pdcData.auditorEmail || '';
-      const pdcSynced = Boolean(pdcEmail || pdcDate);
-      const pdcSyncBadge = pdcSynced ? (pdcData.syncStatus || 'محفوظ ومزامن') : 'بانتظار التدقيق';
+      const pdcSynced = Boolean(pdcEval.length > 0 || pdcStatus === 'مؤهل' || pdcStatus === 'غير مؤهل');
 
-      // 2. Line 2 Data: تدقيق الإنشاءات (constructionAudit)
-      const constData = order.constructionAudit || {};
-      const constStatus = constData.mainStatus || 'غير محدد';
+      const constData = order.constructionAudit && typeof order.constructionAudit === 'object' ? order.constructionAudit : ({} as any);
+      const constEval = getEvaluatedColumnSupportChecklistKeys(order, 'constructionAudit');
+      const constStats = calculateSupportChecklistStats(extractColumnSupportChecklistMap(order, 'constructionAudit'), constEval);
+      const constStatus =
+        constEval.length > 0
+          ? constStats.isAllApplicableCompleted
+            ? 'مؤهل'
+            : 'غير مؤهل'
+          : constData.mainStatus === 'مؤهل' || constData.mainStatus === 'غير مؤهل'
+          ? constData.mainStatus
+          : '';
       const constDate = constData.auditDateRiyadh || (constData.lastUpdatedAt ? String(constData.lastUpdatedAt).split(' ')[0] : '');
       const constTime = constData.auditTimeRiyadh || (constData.lastUpdatedAt ? String(constData.lastUpdatedAt).split(' ').slice(1).join(' ') : '');
       const constEmail = constData.auditorEmail || '';
-      const constSynced = Boolean(constEmail || constDate);
-      const constSyncBadge = constSynced ? (constData.syncStatus || 'محفوظ ومزامن') : 'بانتظار التدقيق';
+      const constSynced = Boolean(constEval.length > 0 || constStatus === 'مؤهل' || constStatus === 'غير مؤهل');
 
-      // 3. Line 3 Data: تدقيق المساندة الفنية (procedure155Status / technicalSupportAudit)
-      const tsData = order.technicalSupportAudit || {};
-      const tsStatus = order.procedure155Status || tsData.status || 'مؤهل للاغلاق ( معتمد )';
+      const tsData = order.technicalSupportAudit || ({} as any);
+      const tsEval = getEvaluatedSupportChecklistKeys(order);
+      const tsStats = calculateSupportChecklistStats(extractOrderSupportChecklistMap(order), tsEval);
+      const rawTsMain = String(order.procedure155Status || '').trim();
+      const tsHasManual = Boolean(rawTsMain && rawTsMain !== 'قيد التدقيق' && rawTsMain !== 'قيد التدقيق الفني');
+      const tsStatus =
+        tsEval.length > 0
+          ? tsStats.isAllApplicableCompleted && !rawTsMain.includes('غير مؤهل')
+            ? 'مؤهل'
+            : 'غير مؤهل'
+          : tsHasManual
+          ? !rawTsMain.includes('غير') && (rawTsMain.includes('مؤهل') || rawTsMain.includes('معتمد'))
+            ? 'مؤهل'
+            : 'غير مؤهل'
+          : '';
       const legacyTimeVal = order.statusSyncTime || stringValue || '';
       const legacyDisplayTime = legacyTimeVal.includes('|') ? legacyTimeVal.split('|')[0]?.trim() : legacyTimeVal;
       const legacyEmail = order.statusSyncEmail || (legacyTimeVal.includes('|') ? legacyTimeVal.split('|')[1]?.trim() : '');
-      // Only fall back to legacy statusSyncTime/Email if neither PDC nor Construction claimed that exact timestamp
       const isLegacyFromOtherAudit =
         (pdcEmail && legacyEmail === pdcEmail && legacyDisplayTime.includes(pdcDate)) ||
         (constEmail && legacyEmail === constEmail && legacyDisplayTime.includes(constDate));
@@ -2798,22 +3050,14 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
         (!isLegacyFromOtherAudit && (order.statusSyncTimeRiyadh || (legacyDisplayTime ? legacyDisplayTime.split(' ').slice(1).join(' ') : ''))) ||
         '';
       const tsEmail = tsData.auditorEmail || (!isLegacyFromOtherAudit ? legacyEmail : '') || '';
-      const tsSynced = Boolean(tsEmail || (tsDate && tsDate !== '-'));
-      const tsSyncBadge = tsSynced ? (tsData.syncStatus || order.auditSyncStatus || 'محفوظ ومزامن') : 'بانتظار التدقيق';
-
-      const threeLinesSummary = [
-        `1. تدقيق PDC: [${pdcStatus}] | ${pdcSyncBadge} | ${pdcDate || '-'} ${pdcTime || ''} | ${pdcEmail || 'لم يدقق بعد'}`,
-        `2. تدقيق الإنشاءات: [${constStatus}] | ${constSyncBadge} | ${constDate || '-'} ${constTime || ''} | ${constEmail || 'لم يدقق بعد'}`,
-        `3. تدقيق المساندة الفنية: [${tsStatus}] | ${tsSyncBadge} | ${tsDate || '-'} ${tsTime || ''} | ${tsEmail || 'لم يدقق بعد'}`
-      ].join('\n');
+      const tsSynced = Boolean(tsEval.length > 0 || tsStatus === 'مؤهل' || tsStatus === 'غير مؤهل');
 
       const auditRows = [
         {
           index: 1,
-          label: '1. تدقيق PDC',
+          shortLabel: 'PDC',
           status: pdcStatus,
           synced: pdcSynced,
-          syncBadge: pdcSyncBadge,
           date: pdcDate,
           time: pdcTime,
           email: pdcEmail,
@@ -2821,10 +3065,9 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
         },
         {
           index: 2,
-          label: '2. تدقيق الإنشاءات',
+          shortLabel: 'إنشاءات',
           status: constStatus,
           synced: constSynced,
-          syncBadge: constSyncBadge,
           date: constDate,
           time: constTime,
           email: constEmail,
@@ -2832,104 +3075,60 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
         },
         {
           index: 3,
-          label: '3. تدقيق المساندة الفنية',
+          shortLabel: 'مساندة',
           status: tsStatus,
           synced: tsSynced,
-          syncBadge: tsSyncBadge,
           date: tsDate,
           time: tsTime,
           email: tsEmail,
-          isPositive: !String(tsStatus).includes('غير') && (String(tsStatus).includes('مؤهل') || String(tsStatus).includes('معتمد'))
+          isPositive: tsStatus === 'مؤهل'
         }
-      ];
+      ].filter((r) => r.synced);
+
+      if (auditRows.length === 0) {
+        return <div className="min-h-[26px] w-full" />;
+      }
+
+      const activeLinesSummary = auditRows
+        .map((r) => `${r.shortLabel}: [${r.status}] | ${r.date || '-'} ${r.time || ''} | ${r.email || ''}`)
+        .join('\n');
 
       return (
         <div
-          className="flex flex-col gap-1 p-1.5 rounded-xl border-2 border-[#003366]/30 bg-slate-50/95 shadow-2xs w-full min-w-[280px] max-w-[360px] text-right group/cell"
-          title={threeLinesSummary}
+          className="flex flex-col gap-0.5 p-1 rounded-lg border border-[#003366]/25 bg-slate-50/95 shadow-2xs w-full min-w-[195px] max-w-[270px] text-right group/cell"
+          title={activeLinesSummary}
         >
-          {/* Card Header */}
-          <div className="flex items-center justify-between gap-1 px-1 pb-1 border-b border-slate-200/90">
-            <div className="flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#003366] shrink-0" />
-              <span className="text-[10px] font-black text-[#003366]">
-                بطاقة مزامنة التدقيق (3 أسطر بالترتيب)
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={(e) => handleCopy(threeLinesSummary, cellKey, e)}
-              className="p-0.5 px-1.5 rounded bg-white hover:bg-blue-50 text-[#003366] border border-slate-200 text-[9px] font-bold flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
-              title="نسخ مزامنة أعمدة التدقيق الثلاثة"
-            >
-              {isCopied ? <Check className="w-2.5 h-2.5 text-emerald-700" /> : <Copy className="w-2.5 h-2.5" />}
-              <span>{isCopied ? 'تم النسخ' : 'نسخ'}</span>
-            </button>
-          </div>
-
-          {/* Scrollable Card Body with BOTH Horizontal and Vertical Scrollbars showing the 3 ordered lines */}
-          <div
-            className="overflow-x-auto overflow-y-auto max-h-[115px] rounded-lg border border-slate-200 bg-white p-1.5 space-y-1.5"
-            style={{ scrollbarWidth: 'thin' }}
-          >
+          <div className="overflow-x-auto rounded border border-slate-200 bg-white p-0.5 space-y-0.5" style={{ scrollbarWidth: 'thin' }}>
             {auditRows.map((row) => (
               <div
                 key={row.index}
-                className={`flex items-center gap-1.5 px-2 py-1 rounded-md border whitespace-nowrap min-w-max text-[10px] ${
-                  row.synced
-                    ? 'bg-emerald-50/70 border-emerald-200/90 text-slate-900'
-                    : 'bg-slate-50 border-slate-200 text-slate-600'
-                }`}
+                className="flex items-center justify-between gap-1 px-1.5 py-0.5 rounded text-[9px] whitespace-nowrap bg-emerald-50/60 text-slate-900"
               >
-                {/* Ordered Column Title */}
-                <span className="font-black text-[#003366] min-w-[125px] inline-block">
-                  {row.label}:
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className="font-black text-[#003366] min-w-[44px] inline-block">
+                    {row.shortLabel}:
+                  </span>
+                  <span
+                    className={`px-1 py-0.1 rounded font-black text-[8.5px] ${
+                      row.isPositive
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-rose-600 text-white'
+                    }`}
+                  >
+                    {row.status}
+                  </span>
+                </div>
 
-                {/* Audit Status Badge */}
-                <span
-                  className={`px-1.5 py-0.5 rounded font-black text-[9.5px] border ${
-                    row.status === 'غير محدد'
-                      ? 'bg-slate-100 text-slate-600 border-slate-300'
-                      : row.isPositive
-                      ? 'bg-emerald-600 text-white border-emerald-700'
-                      : 'bg-rose-600 text-white border-rose-700'
-                  }`}
-                >
-                  {row.status}
-                </span>
-
-                <span className="text-slate-300 font-bold">|</span>
-
-                {/* Sync Status Badge */}
-                <span
-                  className={`px-1.5 py-0.5 rounded font-extrabold text-[9px] border ${
-                    row.synced
-                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                      : 'bg-amber-50 text-amber-800 border-amber-200'
-                  }`}
-                >
-                  {row.syncBadge}
-                </span>
-
-                <span className="text-slate-300 font-bold">|</span>
-
-                {/* Riyadh Date & Time */}
-                <span className="font-mono font-bold text-slate-800 inline-flex items-center gap-1" dir="ltr">
-                  <Clock className="w-2.5 h-2.5 text-emerald-700 shrink-0" />
-                  <span>{row.date ? `${row.date} ${row.time || ''}`.trim() : 'لم يُسجل وقت'}</span>
-                </span>
-
-                <span className="text-slate-300 font-bold">|</span>
-
-                {/* Verified Auditor Email */}
-                <span
-                  className="font-mono font-bold text-[#003366] bg-blue-50/90 px-1.5 py-0.5 rounded border border-blue-200/80 inline-flex items-center gap-1"
-                  dir="ltr"
-                >
-                  <Mail className="w-2.5 h-2.5 text-orange-600 shrink-0" />
-                  <span>{row.email || 'بانتظار المدقق'}</span>
-                </span>
+                <div className="flex items-center gap-1 font-mono text-[8.5px]" dir="ltr">
+                  {row.date && (
+                    <span className="text-slate-700 font-bold">{row.date.slice(5)}</span>
+                  )}
+                  {row.email && (
+                    <span className="text-[#003366] bg-blue-50 px-1 rounded border border-blue-200 truncate max-w-[75px]">
+                      {row.email.split('@')[0]}
+                    </span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -2937,18 +3136,31 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
       );
     }
 
-    // C2. Procedure 155 Status (حالة اجراء 155) - Empty by default until audited, restricted to authorized users only
+    // C2. Procedure 155 Status (حالة اجراء 155):
+    // - يظهر تلقائياً (مؤهل لإجراء 155) إذا كان التدقيق مؤهل 100% في جميع أعمدة التدقيق الثلاثة
+    // - قابل للتعديل من قبل أي أحد على حالة الإجراء
+    // - ما عدا ذلك فارغ
     if (col.field === 'procedure155') {
-      const hasAudited155 = Boolean(order.procedureSyncTime || order.procedureSyncEmail);
-      const rawVal = hasAudited155 ? (stringValue || order.procedure155 || '').trim() : '';
+      const rawVal = getEffectiveProcedure155Status(order);
       const isEmpty155 = !rawVal;
-      const isDone155 = !isEmpty155 && (rawVal === 'تم اجراء 155' || (!rawVal.includes('غير') && rawVal.includes('تم')));
-      const canEdit155 = canUserEditColumn(currentUser, 'procedure155');
-      const baseOptions = dropdownOptions.procedure155 || [
+      const isPositive155 =
+        !isEmpty155 &&
+        !rawVal.includes('غير') &&
+        (rawVal.includes('مؤهل') || rawVal.includes('تم'));
+      const canEdit155 = true;
+      const customOpts = (dropdownOptions.procedure155 || []).filter(
+        (opt) =>
+          opt !== 'مؤهل لإجراء 155' &&
+          opt !== 'تم اجراء 155' &&
+          opt !== 'غير مؤهل لاجراء 155'
+      );
+      const options = [
+        'مؤهل لإجراء 155',
         'تم اجراء 155',
-        'غير مؤهل لاجراء 155'
+        'غير مؤهل لاجراء 155',
+        ...customOpts,
+        '— تفريغ الخلية —'
       ];
-      const options = [...baseOptions, '— تفريغ الخلية —'];
 
       return (
         <div className="relative inline-block w-full text-right">
@@ -2958,12 +3170,6 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
             data-cell-trigger={`${order.id}-procedure155`}
             onClick={(e) => {
               e.stopPropagation();
-              if (!canEdit155) {
-                if (onCheckPermission) {
-                  onCheckPermission('editProcedure155', 'تعديل عمود (حالة اجراء 155) - هذا العمود غير متاح لأي مستخدم إلا بإعطاء صلاحية له من قسم الصلاحيات');
-                }
-                return;
-              }
               if (isInlineOpen) {
                 setOpenInlineDropdown(null);
                 return;
@@ -2996,23 +3202,19 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
               fontStyle: cs.italic ? 'italic' : 'normal',
               textDecoration: cs.textDecoration
             }}
-            className={`w-full min-h-[30px] flex items-center justify-between gap-1.5 px-2 py-1 rounded-lg transition-all border group ${
-              canEdit155 ? 'cursor-pointer' : 'cursor-not-allowed'
-            } ${
+            className={`w-full min-h-[28px] flex items-center justify-between gap-1.5 px-2 py-1 rounded-lg transition-all border group cursor-pointer ${
               isInlineOpen ? 'ring-2 ring-indigo-500 scale-[1.02]' : ''
             } ${
               isEmpty155
-                ? canEdit155
-                  ? 'bg-transparent hover:bg-slate-100/80 text-slate-500 border-transparent hover:border-slate-300'
-                  : 'bg-transparent text-transparent border-transparent'
-                : isDone155
+                ? 'bg-transparent hover:bg-slate-100/80 text-slate-500 border-transparent hover:border-slate-300'
+                : isPositive155
                 ? 'bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white border-emerald-500 ring-1 ring-emerald-400 shadow-2xs'
                 : 'bg-rose-600 hover:bg-rose-700 text-white border-rose-500 ring-1 ring-rose-400 shadow-2xs'
             }`}
             title={
-              canEdit155
-                ? 'انقر لتدقيق وتحديد (حالة اجراء 155) ومزامنة التاريخ فوراً'
-                : 'عمود (حالة اجراء 155) غير متاح إلا للمستخدمين المصرح لهم من قسم الصلاحيات'
+              rawVal
+                ? `حالة إجراء 155: ${rawVal} (انقر للتعديل)`
+                : 'انقر لتحديد أو تعديل حالة إجراء 155 (تظهر تلقائياً "مؤهل لإجراء 155" عند تأهل جميع أعمدة التدقيق بنسبة 100%)'
             }
           >
             {isEmpty155 ? (
@@ -3027,7 +3229,7 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                 <div className={`flex items-center gap-1 flex-1 min-w-0 ${
                   cs.textAlign === 'center' ? 'justify-center' : cs.textAlign === 'left' ? 'justify-start' : 'justify-end'
                 } ${isWrapTextEnabled ? 'whitespace-normal break-words' : 'truncate'}`}>
-                  {isDone155 ? (
+                  {isPositive155 ? (
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-200" />
                   ) : (
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-200" />
@@ -3046,26 +3248,31 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
       );
     }
 
-    // C3. Procedure Sync Time (مزامنة الاجراء: تشمل الوقت والتاريخ وايميل المستخدم)
+    // C3. Procedure Sync Time (مزامنة الاجراء: فارغ افتراضياً لحين اعتماد أو تعديل إجراء 155)
     if (col.field === 'procedureSyncTime') {
       const pSyncVal = order.procedureSyncTime || stringValue;
       const rawEmail = order.procedureSyncEmail || (pSyncVal && pSyncVal.includes('|') ? pSyncVal.split('|')[1]?.trim() : '');
       const displayTime = pSyncVal && pSyncVal.includes('|') ? pSyncVal.split('|')[0]?.trim() : pSyncVal;
-      const hasValue = Boolean(displayTime && displayTime !== '-');
-      const copyVal = hasValue ? `${displayTime}${rawEmail ? ` | ${rawEmail}` : ''}`.trim() : '-';
+      const hasValue = Boolean(displayTime && displayTime !== '-' && displayTime !== 'قيد المزامنة');
+
+      if (!hasValue) {
+        return <div className="min-h-[26px] w-full" />;
+      }
+
+      const copyVal = `${displayTime}${rawEmail ? ` | ${rawEmail}` : ''}`.trim();
 
       return (
         <div 
           onClick={(e) => handleCopy(copyVal, cellKey, e)}
           className="flex flex-col gap-1 group/cell cursor-pointer p-1.5 rounded-lg bg-blue-50/80 hover:bg-blue-100/90 border-2 border-blue-300 text-right transition-all shadow-2xs"
-          title={`وقت وتاريخ مزامنة إجراء 155: ${displayTime || 'قيد المزامنة'}\nايميل المستخدم الذي قام بالتحديث: ${rawEmail || 'غير مسجل'}\n(انقر لنسخ كافة البيانات)`}
+          title={`وقت وتاريخ مزامنة إجراء 155: ${displayTime}\nايميل المستخدم الذي قام بالتحديث: ${rawEmail || 'غير مسجل'}\n(انقر لنسخ كافة البيانات)`}
         >
           <div className="flex items-center justify-between gap-1">
             <div className="flex items-center gap-1 min-w-0">
               <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />
               <Clock className="w-3.5 h-3.5 text-blue-800 shrink-0" />
               <span className="text-[11px] font-black text-blue-950 font-mono tracking-tight select-all">
-                {hasValue ? displayTime : <span className="text-slate-400 font-bold italic">قيد المزامنة</span>}
+                {displayTime}
               </span>
             </div>
             <button
@@ -3077,7 +3284,7 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
               {isCopied ? <Check className="w-3 h-3 text-blue-800" /> : <Copy className="w-3 h-3" />}
             </button>
           </div>
-          {hasValue && rawEmail && (
+          {rawEmail && (
             <div className="flex items-center gap-1 text-[10px] font-bold text-blue-950 bg-blue-200/60 px-1.5 py-0.5 rounded border border-blue-300/80 font-mono select-all truncate" dir="ltr">
               <Mail className="w-2.5 h-2.5 text-blue-800 shrink-0" />
               <span className="truncate">{rawEmail}</span>
@@ -3323,40 +3530,6 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
       );
     }
 
-    // F. Execution Status - Click to Copy Only
-    if (col.field === 'executionStatus') {
-      return (
-        <div 
-          onClick={(e) => handleCopy(stringValue, cellKey, e)}
-          className="flex items-center justify-between gap-1 group/cell cursor-pointer"
-          title="انقر لنسخ الحالة"
-        >
-          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold select-all ${
-            stringValue === 'جاهز للاستلام 155'
-              ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-              : stringValue === 'معلق لنواقص'
-              ? 'bg-amber-100 text-amber-900 border border-amber-300'
-              : stringValue === 'مكتمل ميدانياً'
-              ? 'bg-sky-100 text-sky-900 border border-sky-300'
-              : stringValue === 'مرفوض'
-              ? 'bg-rose-100 text-rose-900 border border-rose-300'
-              : 'bg-blue-100 text-blue-900 border border-blue-300'
-          }`}>
-            {stringValue}
-          </span>
-
-          <button
-            type="button"
-            onClick={(e) => handleCopy(stringValue, cellKey, e)}
-            className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors opacity-0 group-hover/cell:opacity-100 shrink-0"
-            title="نسخ نص الخلية"
-          >
-            {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-          </button>
-        </div>
-      );
-    }
-
     // G. Photos Coordination column
     if (col.field === 'photoCoordination' || col.field === 'photos') {
       const statement = order.photoCoordination || (order.photos && order.photos.length > 0 && order.photos.some(p => p.caption?.includes('ملاحظة')) ? 'مرفق صورة كملاحظة' : 'لا توجد صور مطلوبة');
@@ -3559,51 +3732,78 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
   const tableInnerContent = (
     <div className={`${
       isERP
-        ? 'bg-white rounded-md border border-[#CBD5E1] shadow-xs'
+        ? 'bg-white rounded-xl border border-[#CBD5E1] shadow-sm'
         : isPro
-        ? 'bg-white rounded-2xl border border-slate-200/90 shadow-[0_14px_40px_-12px_rgba(15,23,42,0.09)]'
-        : 'bg-white rounded-2xl border-2 border-emerald-500/90 shadow-md'
-    } flex flex-col flex-1 text-right ${internalPresentationMode === 'overlay' ? 'max-h-[92vh] overflow-y-auto' : 'h-[calc(100vh-135px)] min-h-[520px] mb-4'}`}>
+        ? 'bg-white rounded-2xl border border-[#002855]/20 shadow-[0_14px_40px_-12px_rgba(0,40,85,0.12)]'
+        : 'bg-white rounded-2xl border-2 border-[#002855]/30 shadow-md'
+    } flex flex-col flex-1 min-h-0 text-right ${internalPresentationMode === 'overlay' ? 'max-h-[92vh] overflow-y-auto' : 'h-full mb-0'}`}>
       
-      {/* Table Header Controls & Title */}
-      <div className="px-4 py-3 sm:px-5 text-white flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5 bg-[#0F172A] border-b border-slate-800 shadow-xs">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-sm sm:text-base font-black text-white tracking-tight flex items-center gap-2 flex-wrap">
-              <span className="w-2 h-4 rounded-xs bg-amber-400 shrink-0" />
-              <span>قوائم التدقيق علي اوامر العمل{officeTitle && officeTitle !== 'جميع المكاتب الفرعية' ? ` · ${officeTitle}` : ''}</span>
+      {/* Dynamic Corporate Table Header & Live Audit Counters (قوائم التدقيق على أوامر العمل) */}
+      <div className="px-3.5 py-2.5 sm:px-5 text-white flex flex-col xl:flex-row xl:items-center xl:justify-between gap-2.5 bg-gradient-to-l from-[#001D40] via-[#002855] to-[#004B8D] border-b-2 border-[#F58220] shadow-sm">
+        <div className="min-w-0 flex items-center gap-2.5 flex-wrap">
+          <div className="w-8 h-8 rounded-xl bg-[#F58220] text-white flex items-center justify-center shadow-xs shrink-0">
+            <ShieldCheck className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-xs sm:text-sm font-black text-white tracking-tight flex items-center gap-2 flex-wrap">
+                <span>قوائم التدقيق على أوامر العمل{officeTitle && officeTitle !== 'جميع المكاتب الفرعية' ? ` • ${officeTitle}` : ''}</span>
+              </h2>
               {activeYear && activeMonth && (
-                <span className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold ${
-                  isPro
-                    ? 'bg-white/[0.08] text-slate-200 border border-white/[0.12]'
-                    : 'bg-amber-400/20 text-amber-200 border border-amber-300/40 font-black'
-                }`}>
+                <span className="px-2 py-0.5 rounded-lg text-[10.5px] font-black bg-white/15 text-[#FDB813] border border-white/20">
                   {activeMonth === 'all' ? `كافة شهور ${activeYear}` : `شهر ${getArabicMonthName(activeMonth)} ${activeYear}`}
                 </span>
               )}
               {activeTableName && (
-                <span className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 ${
-                  isPro
-                    ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                    : 'bg-emerald-900 text-emerald-200 border border-emerald-500/40 font-black'
-                }`}>
+                <span className="px-2.5 py-0.5 rounded-lg text-[10.5px] font-black flex items-center gap-1.5 bg-emerald-500/20 text-emerald-200 border border-emerald-400/40">
                   {filteredOrders.some(w => w.isNew && !w.isEdited) && (
-                    <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-emerald-500 text-white shadow-xs flex items-center gap-0.5">
-                      <span>جديد</span>
+                    <span className="px-1.5 py-0.5 rounded-md text-[9.5px] font-black bg-emerald-500 text-white shadow-xs">
+                      جديد
                     </span>
                   )}
                   <span>{activeTableName}</span>
                 </span>
               )}
-            </h2>
-            <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-white/[0.1] text-white border border-white/[0.15] font-mono tabular-nums">
-              {filteredOrders.length} / {orders.length} سطر
-            </span>
+            </div>
           </div>
         </div>
 
-        {/* Compact Status & Mode Switch on Header Right */}
+        {/* Live Dynamic Audit Metrics Strip + Mode Switch on Header Left */}
         <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+          {/* إجمالي المعروض */}
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/10 border border-white/20 text-[11px] font-black text-white">
+            <span className="text-blue-200">الأسطر:</span>
+            <span className="font-mono text-[#FDB813] tabular-nums">{filteredOrders.length} / {orders.length}</span>
+          </div>
+
+          {/* مؤهل 155 */}
+          <button
+            type="button"
+            onClick={() => setSmartQuickFilter(smartQuickFilter === 'ready155' ? 'all' : 'ready155')}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-[11px] font-black transition-all cursor-pointer ${
+              smartQuickFilter === 'ready155'
+                ? 'bg-emerald-600 text-white border-emerald-300 shadow-xs'
+                : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border-emerald-400/35'
+            }`}
+            title="انقر لتصفية الأوامر المؤهلة والمعتمدة في إجراء 155"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+            <span>مؤهل 155:</span>
+            <span className="font-mono tabular-nums">{readyOrdersCount}</span>
+            <span className="px-1.5 py-0.2 rounded bg-emerald-950/60 text-emerald-300 font-mono text-[10px]">
+              {overallReadyRate}%
+            </span>
+          </button>
+
+          {/* شارة أعمدة التدقيق الثلاثة باللون الأحمر الغامق */}
+          <div
+            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#7F1D1D] text-white border border-red-400/50 text-[10.5px] font-black shadow-2xs"
+            title="أعمدة التدقيق الثلاثة المعتمدة (9. تدقيق PDC • 10. تدقيق الإنشاءات • 11. تدقيق المساندة الفنية) مميزة باللون الأحمر الغامق والكتابة البيضاء"
+          >
+            <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            <span>أعمدة التدقيق الثلاثة (9 • 10 • 11)</span>
+          </div>
+
           <button
             type="button"
             onClick={() => {
@@ -3611,35 +3811,38 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
               setInternalPresentationMode(nextMode);
               if (onChangePresentationMode) onChangePresentationMode(nextMode);
             }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-[11px] border transition-all cursor-pointer active:scale-95 ${
-              isPro
-                ? 'bg-white/[0.07] hover:bg-white/[0.14] text-slate-200 border-white/[0.12]'
-                : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border-amber-400/40'
-            }`}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl font-black text-[11px] bg-white/10 hover:bg-white/20 text-white border border-white/20 transition-all cursor-pointer active:scale-95"
             title={internalPresentationMode === 'overlay' ? 'تثبيت الجدول في الشاشة الرئيسية' : 'عرض الجدول في بطاقة تظهر مستقلة فوق الصفحة الرئيسية'}
           >
             {internalPresentationMode === 'overlay' ? (
               <>
-                <Minimize2 className="w-3.5 h-3.5 text-cyan-400" />
+                <Minimize2 className="w-3.5 h-3.5 text-[#FDB813]" />
                 <span>تثبيت بالشاشة</span>
               </>
             ) : (
               <>
-                <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                <Maximize2 className="w-3.5 h-3.5 text-[#FDB813]" />
                 <span>بطاقة مستقلة</span>
               </>
             )}
           </button>
 
-          {onCloseTable && (
+          {(onCloseTable || internalPresentationMode === 'overlay') && (
             <button
               type="button"
-              onClick={onCloseTable}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-200 font-bold text-[11px] border border-rose-500/30 transition-all cursor-pointer active:scale-95"
-              title="إغلاق وطي بطاقة الجدول"
+              onClick={() => {
+                if (internalPresentationMode === 'overlay') {
+                  setInternalPresentationMode('docked');
+                  if (onChangePresentationMode) onChangePresentationMode('docked');
+                } else if (onCloseTable) {
+                  onCloseTable();
+                }
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-[11px] border border-rose-400/50 transition-all cursor-pointer active:scale-95 shadow-2xs"
+              title={internalPresentationMode === 'overlay' ? 'إغلاق العرض المستقل والعودة للشاشة' : 'إغلاق وطي بطاقة الجدول'}
             >
               <X className="w-3.5 h-3.5" />
-              <span>طي</span>
+              <span>{internalPresentationMode === 'overlay' ? 'إغلاق البطاقة' : 'إغلاق'}</span>
             </button>
           )}
         </div>
@@ -3686,6 +3889,10 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
           if (onCheckPermission && !onCheckPermission('importExcel', 'استيراد بيانات من Excel')) return;
           onOpenImportModal();
         } : undefined}
+        onOpenCompatibleImport={onOpenCompatibleImport ? () => {
+          if (onCheckPermission && !onCheckPermission('importExcel', 'استيراد من الجداول المتوافقة بدلالة الأعمدة')) return;
+          onOpenCompatibleImport();
+        } : undefined}
         onOpenEditStatus={() => {
           const targetOrd = (selectedOrderId ? orders.find(o => o.id === selectedOrderId) : null) || selectedOrder || filteredOrders[0] || orders[0];
           if (targetOrd) handleNavigateAndEditOrder(targetOrd);
@@ -3693,6 +3900,10 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
         onOpenEditBasicData={onEditBasicData ? () => {
           const targetOrd = (selectedOrderId ? orders.find(o => o.id === selectedOrderId) : null) || selectedOrder || filteredOrders[0] || orders[0];
           if (targetOrd) onEditBasicData(targetOrd);
+        } : undefined}
+        onOpenSmartAudit={onAudit155 ? () => {
+          const targetOrd = (selectedOrderId ? orders.find(o => o.id === selectedOrderId) : null) || selectedOrder || filteredOrders[0] || orders[0];
+          if (targetOrd) onAudit155(targetOrd);
         } : undefined}
         onOpenYearMonthPicker={onOpenYearMonthPicker}
 
@@ -3813,7 +4024,14 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
           setInternalPresentationMode(next);
           if (onChangePresentationMode) onChangePresentationMode(next);
         }}
-        onCloseTable={onCloseTable}
+        onCloseTable={() => {
+          if (internalPresentationMode === 'overlay') {
+            setInternalPresentationMode('docked');
+            if (onChangePresentationMode) onChangePresentationMode('docked');
+          } else if (onCloseTable) {
+            onCloseTable();
+          }
+        }}
         onOpenNotesReport={handleOpenNotesReport}
         contractorsList={contractorsList}
         currentUser={currentUser}
@@ -4238,34 +4456,80 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
         );
       })()}
 
-      {/* Interactive Table Container with Keyboard Navigation & Visible Horizontal Scrollbar */}
-      <div 
-        ref={tableContainerRef}
-        tabIndex={0}
-        onKeyDown={handleTableKeyDown}
-        className="w-full flex-1 min-h-0 relative border-b border-slate-300 shadow-2xs table-scroll-container transition-all duration-200 overflow-x-auto overflow-y-auto focus:outline-none focus:ring-1 focus:ring-blue-500/25"
-        style={{ 
-          scrollbarWidth: 'thin', 
-          scrollbarColor: '#2563eb #f1f5f9',
-          zoom: zoomPercent !== 100 ? `${zoomPercent}%` : undefined,
-          fontFamily: tableFontFamily
-        }}
-      >
-        <table className={`w-full text-right border-separate border-spacing-0 sec-bold-table border-2 ${
-          tableBorderStyle === 'none' ? 'border-transparent' : tableBorderStyle === 'box' ? 'border-4 border-slate-900' : 'border-slate-500'
-        } shadow-sm transition-all ${
+      {/* Dynamic Side Floating Scroll Controls over Table Outer Wrapper */}
+      <div className="relative w-full flex-1 min-h-0 flex flex-col group/table-outer overflow-hidden">
+        {/* Floating Dynamic Scroll Controls - Right Side (تحريك لليمين وبداية الجدول) */}
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center gap-1.5 p-1 rounded-2xl bg-[#002855]/90 backdrop-blur-md border border-blue-400/40 shadow-2xl transition-all opacity-85 hover:opacity-100 hover:scale-105 shadow-blue-950/40">
+          <button
+            type="button"
+            onClick={() => handlePan('right')}
+            className="p-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-all cursor-pointer active:scale-95 shadow-md"
+            title="تحريك الجدول لليمين"
+            aria-label="تحريك لليمين"
+          >
+            <ChevronRight className="w-4 h-4 text-[#FDB813] stroke-[3]" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handlePan('start')}
+            className="p-1.5 rounded-lg hover:bg-blue-900/80 text-blue-200 hover:text-white transition-all cursor-pointer"
+            title="الانتقال إلى بداية الجدول (أقصى اليمين)"
+            aria-label="بداية الجدول"
+          >
+            <ChevronsRight className="w-3.5 h-3.5 text-[#FDB813]" />
+          </button>
+        </div>
+
+        {/* Floating Dynamic Scroll Controls - Left Side (تحريك لليسار ونهاية الجدول) */}
+        <div className="absolute left-2 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center gap-1.5 p-1 rounded-2xl bg-[#002855]/90 backdrop-blur-md border border-blue-400/40 shadow-2xl transition-all opacity-85 hover:opacity-100 hover:scale-105 shadow-blue-950/40">
+          <button
+            type="button"
+            onClick={() => handlePan('left')}
+            className="p-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-all cursor-pointer active:scale-95 shadow-md"
+            title="تحريك الجدول لليسار"
+            aria-label="تحريك لليسار"
+          >
+            <ChevronLeft className="w-4 h-4 text-[#FDB813] stroke-[3]" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handlePan('end')}
+            className="p-1.5 rounded-lg hover:bg-blue-900/80 text-blue-200 hover:text-white transition-all cursor-pointer"
+            title="الانتقال إلى نهاية الجدول (أقصى اليسار)"
+            aria-label="نهاية الجدول"
+          >
+            <ChevronsLeft className="w-3.5 h-3.5 text-[#FDB813]" />
+          </button>
+        </div>
+
+        {/* Interactive Table Container with Keyboard Navigation & Visible Horizontal Scrollbar */}
+        <div 
+          ref={tableContainerRef}
+          tabIndex={0}
+          onKeyDown={handleTableKeyDown}
+          className="w-full flex-1 min-h-0 relative border-b border-slate-300 shadow-2xs table-scroll-container transition-all duration-200 overflow-x-auto overflow-y-auto focus:outline-none focus:ring-1 focus:ring-blue-500/25"
+          style={{ 
+            scrollbarWidth: 'thin', 
+            scrollbarColor: '#2563eb #f1f5f9',
+            zoom: zoomPercent !== 100 ? `${zoomPercent}%` : undefined,
+            fontFamily: tableFontFamily
+          }}
+        >
+        <table className={`w-full text-right border-separate border-spacing-0 sec-bold-table border ${
+          tableBorderStyle === 'none' ? 'border-transparent' : tableBorderStyle === 'box' ? 'border-2 border-[#002855]' : 'border-slate-300'
+        } shadow-xs transition-all tabular-nums ${
           isAutoFitToScreen ? 'table-fixed auto-fit-table' : 'table-auto min-w-max'
         }`}
         style={{ fontSize: `${tableFontSize}px`, color: tableTextColor || undefined }}
         >
           
-          {/* Strictly Sticky Header with Filter Controls for Every Column */}
-          <thead className="bg-slate-100 border-b-2 border-slate-300 text-slate-800 sticky top-0 z-30 shadow-xs select-none">
-            <tr className="bg-slate-100">
+          {/* Strictly Sticky Corporate Header with Filter Controls for Every Column */}
+          <thead className="bg-[#002855] border-b-2 border-[#F58220] text-white sticky top-0 z-30 shadow-sm select-none">
+            <tr className="bg-[#002855]">
               {/* Row Sequence Column with Select All Checkbox */}
               <th 
-                className={`sticky top-0 py-3 px-2 text-center font-black text-slate-800 text-xs shadow-xs border-b-2 border-slate-300 border-r border-slate-200 bg-slate-200/90 ${
-                  (isStickyCoreColumns || isStickyFirstCol) ? 'sticky right-0 z-40 shadow-[3px_0_8px_rgba(0,0,0,0.08)]' : 'z-30'
+                className={`sticky top-0 py-2.5 px-2 text-center font-black text-white text-xs shadow-xs border-b-2 border-[#F58220] border-r border-blue-800/70 bg-[#001D40] ${
+                  (isStickyCoreColumns || isStickyFirstCol) ? 'sticky right-0 z-40 shadow-[3px_0_8px_rgba(0,0,0,0.22)]' : 'z-30'
                 }`}
                 style={{
                   top: 0,
@@ -4285,10 +4549,10 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                         setSelectedOrderIds(new Set());
                       }
                     }}
-                    className="w-4 h-4 rounded cursor-pointer text-slate-700 focus:ring-slate-400 accent-slate-700"
+                    className="w-4 h-4 rounded cursor-pointer text-[#F58220] focus:ring-amber-400 accent-[#F58220]"
                     title="تحديد أو إلغاء تحديد كافة الصفوف"
                   />
-                  <span>#</span>
+                  <span className="text-[#FDB813] font-mono">#</span>
                 </div>
               </th>
 
@@ -4298,19 +4562,29 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                 const isFilterOpen = openFilterCol === col.id;
                 const selectedVals = columnFilters[col.field] || [];
                 const stickyInfo = getStickyColumnProps(col.field);
+                const isAuditColumnHeader =
+                  col.field === 'pdcAudit' ||
+                  col.field === 'constructionAudit' ||
+                  col.field === 'procedure155Status';
 
                 return (
                   <th 
                     key={col.id} 
-                    className={`sticky top-0 py-3 px-2 sm:px-2.5 font-black whitespace-nowrap text-slate-800 relative text-xs tracking-wide shadow-xs text-center select-none border-b-2 border-slate-300 border-r border-slate-200 ${
-                      stickyInfo.isSticky ? 'bg-slate-200/95 text-slate-900' : 'bg-slate-100 text-slate-800'
+                    className={`sticky top-0 py-2.5 px-2 sm:px-2.5 font-black whitespace-nowrap text-white relative text-xs tracking-wide shadow-xs text-center select-none ${
+                      isAuditColumnHeader
+                        ? '!bg-[#7F1D1D] !text-white border-b-2 border-[#FDB813] border-r border-red-900 shadow-inner'
+                        : `border-b-2 border-[#F58220] border-r border-blue-800/70 ${
+                            stickyInfo.isSticky ? 'bg-[#001D40] text-white' : 'bg-[#002855] text-white'
+                          }`
                     } ${
-                      stickyInfo.isBoundary ? 'border-l-2 border-slate-350 shadow-[-3px_0_8px_rgba(0,0,0,0.08)]' : ''
+                      stickyInfo.isBoundary ? 'border-l-2 border-[#F58220] shadow-[-3px_0_10px_rgba(0,0,0,0.22)]' : ''
                     } ${
                       isFilterOpen ? 'z-50 overflow-visible' : stickyInfo.isSticky ? 'z-40' : 'z-30'
                     }`}
                     style={{ 
                       top: 0,
+                      backgroundColor: isAuditColumnHeader ? '#7F1D1D' : undefined,
+                      color: '#FFFFFF',
                       right: stickyInfo.isSticky ? `${stickyInfo.rightOffset}px` : undefined,
                       width: columnWidths[col.id] ? `${columnWidths[col.id]}px` : (stickyInfo.isSticky ? stickyInfo.width : (isAutoFitToScreen ? getColumnAutoWidthStyle(col.field) : (col.width || undefined))),
                       minWidth: columnWidths[col.id] ? `${columnWidths[col.id]}px` : (stickyInfo.isSticky ? stickyInfo.minWidth : (col.minWidth || '120px'))
@@ -4326,22 +4600,22 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                         e.stopPropagation();
                         handleColDoubleClick(col);
                       }}
-                      className="absolute left-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-amber-400 active:bg-amber-500 z-30 transition-colors select-none group/resize flex items-center justify-center"
+                      className="absolute left-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-amber-400/50 active:bg-amber-500 z-30 transition-colors select-none group/resize flex items-center justify-center"
                       title="اسحب لتعديل عرض العمود بسلاسة أو انقر نقرتين مزدوجتين للاحتواء التلقائي مثل Excel"
                     >
-                      <div className="w-0.5 h-full bg-slate-300 group-hover/resize:bg-amber-500" />
+                      <div className={`w-0.5 h-full ${isAuditColumnHeader ? 'bg-red-900/90' : 'bg-blue-800/80'} group-hover/resize:bg-[#FDB813]`} />
                     </div>
 
                     <div className={`flex items-center ${tableTextAlign === 'center' ? 'justify-center' : tableTextAlign === 'left' ? 'justify-start' : 'justify-end'} gap-1.5 w-full`}>
                       <button
                         type="button"
                         onClick={() => handleSort(col.field)}
-                        className="flex items-center gap-1 font-black text-slate-800 hover:text-blue-700 cursor-pointer truncate"
+                        className="flex items-center gap-1 font-black !text-white hover:text-[#FDB813] cursor-pointer truncate transition-colors drop-shadow-2xs"
                         title={`انقر لترتيب عمود (${col.title}) تصاعدياً / تنازلياً`}
                       >
-                        <span className="truncate">{col.title}</span>
+                        <span className="truncate !text-white font-black">{col.title}</span>
                         {Boolean(sortConfig && col.field && sortConfig.field === col.field) && (
-                          <span className="text-blue-600 font-black text-[11px] shrink-0">
+                          <span className="text-[#FDB813] font-black text-[11px] shrink-0">
                             {sortConfig?.direction === 'asc' ? ' ▲' : ' ▼'}
                           </span>
                         )}
@@ -4373,8 +4647,10 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                           }}
                           className={`p-1 rounded-md transition-all flex items-center gap-0.5 cursor-pointer ${
                             isFiltered 
-                              ? 'bg-blue-600 text-white font-black shadow-2xs' 
-                              : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200/80'
+                              ? 'bg-[#F58220] text-white font-black shadow-2xs ring-1 ring-amber-300' 
+                              : isAuditColumnHeader
+                              ? 'text-white/90 hover:text-white hover:bg-white/20'
+                              : 'text-blue-200 hover:text-white hover:bg-white/15'
                           }`}
                           title={`فلترة بيانات عمود (${col.title})`}
                         >
@@ -4393,7 +4669,7 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
 
               {/* Actions Column Header */}
               <th 
-                className="sticky top-0 z-30 py-3 px-2 text-center font-black text-slate-800 text-xs shadow-xs border-b-2 border-slate-300 border-r border-l border-slate-200 bg-slate-200/90"
+                className="sticky top-0 z-30 py-2.5 px-2 text-center font-black text-white text-xs shadow-xs border-b-2 border-[#F58220] border-r border-l border-blue-800/70 bg-[#001D40]"
                 style={{
                   top: 0,
                   width: isAutoFitToScreen ? '8.5%' : undefined,
@@ -4474,7 +4750,7 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
 
                 const customBg = customRowColors[wo.id];
 
-                // Row background: ONLY Light Green Focus when working on the row, or clean white/zebra (no dark red or type-based row colors)
+                // Row background: ONLY Light Green Focus when working on the row, or clean white/zebra
                 const rowBgClass = isWorkingRow
                   ? 'bg-emerald-100/95 hover:bg-emerald-100 ring-2 ring-inset ring-emerald-500 font-bold'
                   : isChecked
@@ -4482,8 +4758,8 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                   : customBg
                   ? 'hover:brightness-95 font-bold'
                   : index % 2 === 0
-                  ? 'bg-white hover:bg-emerald-50/60'
-                  : 'bg-slate-50/80 hover:bg-emerald-50/60';
+                  ? 'bg-white hover:bg-blue-50/50'
+                  : 'bg-slate-50/85 hover:bg-blue-50/50';
 
                 return (
                   <tr 
@@ -4495,7 +4771,7 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                     }}
                     onDoubleClick={() => handleNavigateAndEditOrder(wo)}
                     style={!isWorkingRow && customBg ? { backgroundColor: customBg } : undefined}
-                    className={`transition-colors cursor-pointer border-b-2 border-slate-400 ${rowBgClass}`}
+                    className={`transition-colors cursor-pointer border-b border-slate-200 ${rowBgClass}`}
                   >
                     {/* Sequence # & Checkbox Column: ONLY column that keeps status colors & badges */}
                     <td 
@@ -4510,9 +4786,9 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                       } ${
                         tableVerticalAlign === 'top' ? 'align-top' : tableVerticalAlign === 'bottom' ? 'align-bottom' : 'align-middle'
                       } ${
-                        tableBorderStyle === 'none' ? 'border-none' : tableBorderStyle === 'bottom' ? 'border-b-2 border-r-0 border-l-0' : 'border-b-2 border-r-2 border-l border-slate-400'
-                      } text-center font-mono font-black ${
-                        (isStickyCoreColumns || isStickyFirstCol) ? 'sticky right-0 z-20 shadow-[3px_0_8px_rgba(0,0,0,0.12)]' : ''
+                        tableBorderStyle === 'none' ? 'border-none' : tableBorderStyle === 'bottom' ? 'border-b border-r-0 border-l-0' : 'border-b border-r border-l border-slate-300'
+                      } text-center font-mono tabular-nums font-black ${
+                        (isStickyCoreColumns || isStickyFirstCol) ? 'sticky right-0 z-20 shadow-[3px_0_8px_rgba(0,0,0,0.08)]' : ''
                       } ${
                         isDuplicate
                           ? (customBg ? '' : 'bg-blue-200/95') + ' text-blue-950 border-blue-400'
@@ -4524,7 +4800,7 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                           ? (customBg ? '' : 'bg-amber-100/95') + ' text-amber-950 border-amber-400'
                           : isWorkingRow
                           ? 'bg-emerald-200/95 text-emerald-950 border-emerald-500'
-                          : (customBg ? '' : 'bg-slate-100/90') + ' text-slate-900 border-slate-400'
+                          : (customBg ? '' : 'bg-slate-100/90') + ' text-slate-900 border-slate-300'
                       }`}
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -4643,24 +4919,24 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                           color: cs.textColor || undefined
                         }}
                         className={`${
-                          tableDensity === 'compact' ? 'py-1 px-1 sm:px-1.5 text-xs' : tableDensity === 'spacious' ? 'py-3 px-2 sm:px-3 text-sm' : 'py-2 px-1.5 sm:px-2.5 text-xs sm:text-[13px]'
+                          tableDensity === 'compact' ? 'py-0.5 px-1 text-[11px]' : tableDensity === 'spacious' ? 'py-2.5 px-2 text-xs' : 'py-1.5 px-1.5 text-xs'
                         } ${
                           cs.verticalAlign === 'top' ? 'align-top' : cs.verticalAlign === 'bottom' ? 'align-bottom' : 'align-middle'
                         } ${
-                          tableBorderStyle === 'none' ? 'border-none' : tableBorderStyle === 'bottom' ? 'border-b-2 border-r-0' : 'border-b-2 border-r-2'
+                          tableBorderStyle === 'none' ? 'border-none' : tableBorderStyle === 'bottom' ? 'border-b border-r-0' : 'border-b border-r'
                         } ${
                           cs.textAlign === 'center' ? 'text-center' : cs.textAlign === 'left' ? 'text-left' : 'text-right'
                         } ${
                           stickyInfo.isSticky ? 'sticky z-20' : ''
                         } ${
-                          stickyInfo.isBoundary ? 'border-l-4 border-slate-700/80 shadow-[-5px_0_12px_rgba(0,0,0,0.18)]' : ''
+                          stickyInfo.isBoundary ? 'border-l-2 border-[#004B8D]/60 shadow-[-4px_0_10px_rgba(0,0,0,0.12)]' : ''
                         } ${
                           isThisCellActive ? 'ring-2 ring-inset ring-emerald-600 z-10' : ''
                         } ${
                           isWorkingRow
                             ? 'bg-emerald-100/90 text-slate-900 font-bold border-emerald-400'
-                            : 'text-slate-900 font-bold border-slate-400'
-                        } transition-colors overflow-hidden relative group/td ${
+                            : 'text-slate-900 font-bold border-slate-300/90'
+                        } transition-colors overflow-hidden relative group/td tabular-nums ${
                           isWrapTextEnabled ? 'whitespace-normal break-words' : 'whitespace-nowrap truncate'
                         }`}
                       >
@@ -4679,15 +4955,15 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                     <td 
                       style={{ width: isAutoFitToScreen ? '9%' : undefined }}
                       className={`${
-                        tableDensity === 'compact' ? 'py-1 px-1' : tableDensity === 'spacious' ? 'py-3 px-2' : 'py-2 px-1.5'
+                        tableDensity === 'compact' ? 'py-1 px-1' : tableDensity === 'spacious' ? 'py-3 px-2' : 'py-1.5 px-1.5'
                       } ${
                         tableVerticalAlign === 'top' ? 'align-top' : tableVerticalAlign === 'bottom' ? 'align-bottom' : 'align-middle'
                       } ${
-                        tableBorderStyle === 'none' ? 'border-none' : tableBorderStyle === 'bottom' ? 'border-b-2 border-r-0 border-l-0' : 'border-b-2 border-r-2 border-l-2'
+                        tableBorderStyle === 'none' ? 'border-none' : tableBorderStyle === 'bottom' ? 'border-b border-r-0 border-l-0' : 'border-b border-r border-l'
                       } text-center whitespace-nowrap ${
                         isWorkingRow
                           ? 'bg-emerald-100/90 border-emerald-400 font-bold'
-                          : 'bg-white/90 border-slate-400'
+                          : 'bg-white/95 border-slate-300/90'
                       }`}
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -4810,52 +5086,6 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
           </tbody>
         </table>
       </div>
-
-      {/* Visible Bottom Horizontal Navigation & Panning Bar - Sticky and Always Visible */}
-      <div className="sticky bottom-0 z-30 bg-slate-100/95 border-t-2 border-b-2 border-slate-300 px-3 py-2 flex flex-wrap items-center justify-between gap-2 select-none shadow-md backdrop-blur-md">
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => handlePan('start')}
-            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-black bg-white hover:bg-slate-50 text-slate-800 border-2 border-slate-300 rounded-lg shadow-2xs cursor-pointer active:scale-95 transition-all"
-            title="الانتقال إلى بداية الجدول (يمين)"
-          >
-            <ChevronsRight className="w-4 h-4 text-blue-600" />
-            <span>البداية</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handlePan('right')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-black bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-xs cursor-pointer active:scale-95 transition-all ring-1 ring-blue-400"
-            title="تحريك الجدول يميناً"
-          >
-            <ChevronRight className="w-4 h-4 stroke-[2.5]" />
-            <span>تحريك يمين</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handlePan('left')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-black bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-xs cursor-pointer active:scale-95 transition-all ring-1 ring-blue-400"
-            title="تحريك الجدول يساراً"
-          >
-            <span>تحريك يسار</span>
-            <ChevronLeft className="w-4 h-4 stroke-[2.5]" />
-          </button>
-          <button
-            type="button"
-            onClick={() => handlePan('end')}
-            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-black bg-white hover:bg-slate-50 text-slate-800 border-2 border-slate-300 rounded-lg shadow-2xs cursor-pointer active:scale-95 transition-all"
-            title="الانتقال إلى نهاية الجدول (يسار)"
-          >
-            <span>النهاية</span>
-            <ChevronsLeft className="w-4 h-4 text-blue-600" />
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-600">
-          <MoveHorizontal className="w-3.5 h-3.5 text-blue-600" />
-          <span>الأسهم مفعلة للتحريك في كل الاتجاهات (◄ ► ▲ ▼)</span>
-        </div>
       </div>
 
       {/* Floating Column Filter Popover: Rendered into document.body via Portal to Never Get Clipped */}
@@ -4865,19 +5095,29 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
           if (!activeCol) return null;
           const distinctItems = distinctValuesByField[activeCol.field] || [];
           const selectedVals = columnFilters[activeCol.field] || [];
+          const isThreeAuditFilterCol =
+            activeCol.field === 'pdcAudit' ||
+            activeCol.field === 'constructionAudit' ||
+            activeCol.field === 'procedure155Status';
 
           return (
             <div 
               ref={popoverRef}
               style={getPopoverStyle(filterPopupPos)}
-              className="bg-white rounded-2xl shadow-2xl border-2 border-red-600/70 text-slate-900 p-3.5 z-[999999] text-right animate-in fade-in zoom-in-95 duration-150 ring-4 ring-red-500/10 overflow-y-auto flex flex-col"
+              className={`bg-white rounded-2xl shadow-2xl border-2 ${
+                isThreeAuditFilterCol ? 'border-[#7F1D1D] ring-4 ring-[#7F1D1D]/20' : 'border-[#002855] ring-4 ring-[#002855]/20'
+              } text-slate-900 overflow-hidden z-[999999] text-right animate-in fade-in zoom-in-95 duration-150 flex flex-col font-['Cairo',sans-serif]`}
               dir="rtl"
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
-                <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-                  <Filter className="w-3.5 h-3.5 text-red-600" />
+              <div className={`flex items-center justify-between px-3.5 py-2.5 border-b-2 border-[#F58220] text-white ${
+                isThreeAuditFilterCol
+                  ? 'bg-[#7F1D1D]'
+                  : 'bg-gradient-to-l from-[#001D40] via-[#002855] to-[#004B8D]'
+              }`}>
+                <span className="text-xs font-black text-white flex items-center gap-1.5">
+                  <Filter className="w-3.5 h-3.5 text-[#FDB813]" />
                   <span>فلترة عمود: {activeCol.title}</span>
                 </span>
                 <button
@@ -4886,92 +5126,100 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                     setOpenFilterCol(null);
                     setFilterPopupPos(null);
                   }}
-                  className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer"
+                  className="p-1 text-white/80 hover:text-white hover:bg-white/15 rounded-lg cursor-pointer transition-colors"
                   title="إغلاق الفلتر"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              {/* Search inside distinct values */}
-              <div className="relative mb-2">
-                <input
-                  type="text"
-                  placeholder="بحث سريع في قيم هذا العمود..."
-                  value={filterSearchQuery}
-                  onChange={(e) => setFilterSearchQuery(e.target.value)}
-                  className="w-full text-xs py-1.5 pr-7 pl-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:border-red-500 font-semibold"
-                />
-                <Search className="w-3 h-3 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2" />
-              </div>
+              <div className="p-3.5 flex flex-col flex-1 overflow-hidden">
+                {/* Search inside distinct values */}
+                <div className="relative mb-2">
+                  <input
+                    type="text"
+                    placeholder="بحث سريع في قيم هذا العمود..."
+                    value={filterSearchQuery}
+                    onChange={(e) => setFilterSearchQuery(e.target.value)}
+                    className="w-full text-xs py-1.5 pr-7 pl-2 bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:border-[#004B8D] focus:ring-2 focus:ring-[#004B8D]/20 font-bold text-[#002855]"
+                  />
+                  <Search className="w-3.5 h-3.5 text-[#004B8D] absolute right-2 top-1/2 -translate-y-1/2" />
+                </div>
 
-              {/* Select All / Deselect All */}
-              <div className="flex items-center justify-between text-[11px] mb-2 px-1 text-slate-500 font-bold">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const allVals = distinctItems.map(i => i.value);
-                    setColumnFilters(prev => ({ ...prev, [activeCol.field]: allVals }));
-                  }}
-                  className="text-red-700 hover:underline cursor-pointer font-bold"
-                >
-                  تحديد الكل ({distinctItems.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleClearColumnFilter(activeCol.field)}
-                  className="text-slate-500 hover:text-slate-800 hover:underline cursor-pointer"
-                >
-                  إلغاء التحديد
-                </button>
-              </div>
+                {/* Select All / Deselect All */}
+                <div className="flex items-center justify-between text-[11px] mb-2 px-1 text-slate-500 font-bold">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allVals = distinctItems.map(i => i.value);
+                      setColumnFilters(prev => ({ ...prev, [activeCol.field]: allVals }));
+                    }}
+                    className="text-[#004B8D] hover:text-[#F58220] hover:underline cursor-pointer font-black"
+                  >
+                    تحديد الكل ({distinctItems.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleClearColumnFilter(activeCol.field)}
+                    className="text-rose-600 hover:text-rose-800 hover:underline cursor-pointer font-bold"
+                  >
+                    إلغاء التحديد
+                  </button>
+                </div>
 
-              {/* Distinct Values Checkbox List */}
-              <div className="max-h-56 overflow-y-auto space-y-1 my-1 pr-0.5 scrollbar-thin">
-                {distinctItems
-                  .filter(item => item.value.toLowerCase().includes(filterSearchQuery.toLowerCase()))
-                  .map((item, i) => {
-                    const isChecked = selectedVals.includes(item.value);
-                    return (
-                      <label 
-                        key={i}
-                        className="flex items-center justify-between p-1.5 rounded-lg hover:bg-red-50/60 cursor-pointer text-xs font-semibold transition-colors"
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => handleToggleValueFilter(activeCol.field, item.value)}
-                            className="rounded border-slate-300 text-red-600 focus:ring-red-500 w-3.5 h-3.5 accent-red-600"
-                          />
-                          <span className="truncate text-slate-800">{item.value}</span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 font-mono px-1 font-bold bg-slate-100 rounded">
-                          {item.count}
-                        </span>
-                      </label>
-                    );
-                  })}
-              </div>
+                {/* Distinct Values Checkbox List */}
+                <div className="max-h-56 overflow-y-auto space-y-1 my-1 pr-0.5 scrollbar-thin">
+                  {distinctItems
+                    .filter(item => item.value.toLowerCase().includes(filterSearchQuery.toLowerCase()))
+                    .map((item, i) => {
+                      const isChecked = selectedVals.includes(item.value);
+                      return (
+                        <label 
+                          key={i}
+                          className={`flex items-center justify-between p-1.5 rounded-xl cursor-pointer text-xs font-bold transition-colors ${
+                            isChecked ? 'bg-blue-50/90 border border-[#004B8D]/30 text-[#002855]' : 'hover:bg-slate-100 text-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => handleToggleValueFilter(activeCol.field, item.value)}
+                              className="rounded border-slate-300 text-[#002855] focus:ring-[#004B8D] w-3.5 h-3.5 accent-[#002855]"
+                            />
+                            <span className="truncate">{item.value}</span>
+                          </div>
+                          <span className="text-[10px] text-[#002855] font-mono px-1.5 py-0.5 font-black bg-[#002855]/10 rounded-md">
+                            {item.count}
+                          </span>
+                        </label>
+                      );
+                    })}
+                </div>
 
-              <div className="pt-2 mt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                <button
-                  type="button"
-                  onClick={() => handleClearColumnFilter(activeCol.field)}
-                  className="text-slate-500 hover:text-slate-800 text-[11px] font-bold cursor-pointer"
-                >
-                  إعادة تعيين
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpenFilterCol(null);
-                    setFilterPopupPos(null);
-                  }}
-                  className="px-3.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold cursor-pointer shadow-xs"
-                >
-                  تطبيق الفلتر
-                </button>
+                <div className="pt-2.5 mt-2 border-t border-slate-200 flex items-center justify-between text-xs">
+                  <button
+                    type="button"
+                    onClick={() => handleClearColumnFilter(activeCol.field)}
+                    className="text-slate-600 hover:text-rose-700 text-[11px] font-black cursor-pointer"
+                  >
+                    إعادة تعيين
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenFilterCol(null);
+                      setFilterPopupPos(null);
+                    }}
+                    className={`px-4 py-1.5 text-white rounded-xl text-xs font-black cursor-pointer shadow-xs transition-all ${
+                      isThreeAuditFilterCol
+                        ? 'bg-[#7F1D1D] hover:bg-red-900'
+                        : 'bg-gradient-to-r from-[#002855] to-[#004B8D] hover:from-[#001D40] hover:to-[#002855]'
+                    }`}
+                  >
+                    تطبيق الفلتر
+                  </button>
+                </div>
               </div>
             </div>
           );
@@ -4988,35 +5236,45 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
           const rect = openInlineDropdown.rect;
           const estimatedHeight = Math.min(360, openInlineDropdown.options.length * 40 + 64);
           const pos = calculateSmartPopoverPosition(rect, estimatedHeight, {
-            preferredWidth: Math.max(210, Math.min(300, rect.width)),
+            preferredWidth: Math.max(220, Math.min(310, rect.width)),
             align: 'end'
           });
+          const isThreeAuditInlineField =
+            openInlineDropdown.field === 'pdcAudit' ||
+            openInlineDropdown.field === 'constructionAudit' ||
+            openInlineDropdown.field === 'procedure155Status';
 
           return (
             <div 
               ref={cellDropdownMenuRef}
               style={getPopoverStyle(pos)}
-              className="bg-white rounded-2xl shadow-2xl border-2 border-blue-600/90 py-1.5 z-[999999] animate-in fade-in zoom-in-95 duration-100 text-right ring-4 ring-blue-500/20 overflow-hidden flex flex-col"
+              className={`bg-white rounded-2xl shadow-2xl border-2 ${
+                isThreeAuditInlineField ? 'border-[#7F1D1D] ring-4 ring-[#7F1D1D]/25' : 'border-[#002855] ring-4 ring-[#002855]/20'
+              } z-[999999] animate-in fade-in zoom-in-95 duration-100 text-right overflow-hidden flex flex-col font-['Cairo',sans-serif]`}
               dir="rtl"
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="px-3.5 py-2 text-[11px] font-black text-slate-800 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-2 shrink-0">
+              <div className={`px-3.5 py-2.5 text-[11px] font-black text-white border-b-2 border-[#F58220] flex items-center justify-between gap-2 shrink-0 ${
+                isThreeAuditInlineField
+                  ? 'bg-[#7F1D1D]'
+                  : 'bg-gradient-to-l from-[#001D40] via-[#002855] to-[#004B8D]'
+              }`}>
                 <span className="flex items-center gap-1.5 truncate">
-                  <Check className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  <Check className="w-3.5 h-3.5 text-[#FDB813] shrink-0" />
                   <span>اختيار: {openInlineDropdown.colTitle}</span>
                 </span>
                 <button
                   type="button"
                   onClick={() => setOpenInlineDropdown(null)}
-                  className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-lg cursor-pointer transition-colors"
+                  className="p-1 text-white/80 hover:text-white hover:bg-white/15 rounded-lg cursor-pointer transition-colors"
                   title="إغلاق"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
 
-              <div className="max-h-64 overflow-y-auto py-1 scrollbar-thin">
+              <div className="max-h-64 overflow-y-auto py-1.5 px-1.5 space-y-0.5 scrollbar-thin">
                 {openInlineDropdown.options.map((opt) => {
                   const isSelected = openInlineDropdown.displayVal === opt;
                   return (
@@ -5031,14 +5289,16 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
                         e.stopPropagation();
                         handleDirectCellUpdate(targetOrder, openInlineDropdown.field, opt);
                       }}
-                      className={`w-full px-3.5 py-2.5 text-xs font-bold text-right flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                      className={`w-full px-3 py-2 rounded-xl text-xs font-black text-right flex items-center justify-between gap-2 transition-all cursor-pointer ${
                         isSelected 
-                          ? 'bg-blue-600 text-white font-black shadow-xs' 
-                          : 'text-slate-800 hover:bg-blue-50 hover:text-blue-900'
+                          ? isThreeAuditInlineField
+                            ? 'bg-[#7F1D1D] text-white shadow-xs'
+                            : 'bg-gradient-to-r from-[#002855] to-[#004B8D] text-white shadow-xs' 
+                          : 'text-[#002855] hover:bg-blue-50/90 hover:text-[#F58220]'
                       }`}
                     >
                       <span className="truncate">{opt}</span>
-                      {isSelected && <Check className="w-4 h-4 text-white shrink-0" />}
+                      {isSelected && <Check className="w-4 h-4 text-[#FDB813] shrink-0" />}
                     </button>
                   );
                 })}
@@ -5055,8 +5315,8 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
           const targetOrder = orders.find(o => o.id === editingQualityNotes.orderId);
           if (!targetOrder) return null;
 
-          const pos = calculateSmartPopoverPosition(editingQualityNotes.rect, 250, {
-            preferredWidth: 340,
+          const pos = calculateSmartPopoverPosition(editingQualityNotes.rect, 260, {
+            preferredWidth: 350,
             align: 'end'
           });
 
@@ -5064,73 +5324,75 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
             <div 
               ref={qualityNotesEditorRef}
               style={getPopoverStyle(pos)}
-              className="bg-white rounded-2xl shadow-2xl border-2 border-blue-600 p-3.5 z-[999999] text-right animate-in fade-in zoom-in-95 duration-100 ring-4 ring-blue-500/20"
+              className="bg-white rounded-2xl shadow-2xl border-2 border-[#002855] overflow-hidden z-[999999] text-right animate-in fade-in zoom-in-95 duration-100 ring-4 ring-[#002855]/20 font-['Cairo',sans-serif]"
               dir="rtl"
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
-                <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                  <Edit3 className="w-3.5 h-3.5 text-blue-600" />
-                  <span>تعديل ملاحظات الجودة</span>
+              <div className="flex items-center justify-between px-3.5 py-2.5 border-b-2 border-[#F58220] bg-gradient-to-l from-[#001D40] via-[#002855] to-[#004B8D] text-white">
+                <span className="text-xs font-black text-white flex items-center gap-1.5">
+                  <Edit3 className="w-3.5 h-3.5 text-[#FDB813]" />
+                  <span>تعديل ملاحظات الجودة ({targetOrder.workOrderNumber})</span>
                 </span>
                 <button
                   type="button"
                   onClick={() => setEditingQualityNotes(null)}
-                  className="p-1 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer transition-colors"
+                  className="p-1 text-white/80 hover:text-white hover:bg-white/15 rounded-lg cursor-pointer transition-colors"
                   title="إغلاق"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
 
-              <textarea
-                value={editingQualityNotes.text}
-                onChange={(e) => setEditingQualityNotes({ ...editingQualityNotes, text: e.target.value })}
-                rows={4}
-                placeholder="اكتب ملاحظات الجودة هنا..."
-                className="w-full text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 font-medium text-slate-900 leading-relaxed"
-                autoFocus
-              />
+              <div className="p-3.5">
+                <textarea
+                  value={editingQualityNotes.text}
+                  onChange={(e) => setEditingQualityNotes({ ...editingQualityNotes, text: e.target.value })}
+                  rows={4}
+                  placeholder="اكتب ملاحظات الجودة هنا..."
+                  className="w-full text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-hidden focus:border-[#004B8D] focus:ring-2 focus:ring-[#004B8D]/20 font-bold text-[#002855] leading-relaxed"
+                  autoFocus
+                />
 
-              {/* Quick shortcut to full note itemizer with photo attachments */}
-              <div className="flex items-center justify-between gap-1.5 mt-2 p-2 rounded-xl bg-amber-50 border border-amber-200">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-950">
-                  <Camera className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                  <span>عنصرة الملاحظات وإرفاق صور توضيحية (+ صور)</span>
+                {/* Quick shortcut to full note itemizer with photo attachments */}
+                <div className="flex items-center justify-between gap-1.5 mt-2 p-2 rounded-xl bg-amber-50 border border-[#F58220]/40">
+                  <div className="flex items-center gap-1.5 text-[10px] font-black text-[#002855]">
+                    <Camera className="w-3.5 h-3.5 text-[#F58220] shrink-0" />
+                    <span>عنصرة الملاحظات وإرفاق صور توضيحية (+ صور)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingQualityNotes(null);
+                      setItemizerModalOrder(targetOrder);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-[#F58220] hover:bg-[#e06f10] text-white text-[10px] font-black cursor-pointer shadow-xs shrink-0 flex items-center gap-1"
+                    title="فتح نافذة عنصرة الملاحظات مع إمكانية إرفاق صورة أو أكثر لكل ملاحظة"
+                  >
+                    <span>عنصرة وصور</span>
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingQualityNotes(null);
-                    setItemizerModalOrder(targetOrder);
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-[10px] font-black cursor-pointer shadow-xs shrink-0 flex items-center gap-1"
-                  title="فتح نافذة عنصرة الملاحظات مع إمكانية إرفاق صورة أو أكثر لكل ملاحظة"
-                >
-                  <span>عنصرة وصور</span>
-                </button>
-              </div>
 
-              <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setEditingQualityNotes(null)}
-                  className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleDirectCellUpdate(targetOrder, 'qualityNotes', editingQualityNotes.text.trim());
-                    setEditingQualityNotes(null);
-                  }}
-                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-black rounded-xl shadow-xs cursor-pointer transition-colors flex items-center gap-1.5"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>حفظ وتزامن فوري</span>
-                </button>
+                <div className="flex items-center justify-between gap-2 mt-2.5 pt-2.5 border-t border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setEditingQualityNotes(null)}
+                    className="px-3 py-1.5 text-xs font-black text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl cursor-pointer transition-colors"
+                  >
+                    إلغاء
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleDirectCellUpdate(targetOrder, 'qualityNotes', editingQualityNotes.text.trim());
+                      setEditingQualityNotes(null);
+                    }}
+                    className="px-4 py-1.5 bg-gradient-to-r from-[#002855] to-[#004B8D] hover:from-[#001D40] hover:to-[#002855] text-white text-xs font-black rounded-xl shadow-xs cursor-pointer transition-all flex items-center gap-1.5 border border-[#F58220]/50"
+                  >
+                    <Check className="w-3.5 h-3.5 text-[#FDB813]" />
+                    <span>حفظ وتزامن فوري</span>
+                  </button>
+                </div>
               </div>
             </div>
           );
@@ -5138,60 +5400,15 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
         document.body
       )}
 
-      {/* Table Footer with Summary Stats (Sticky Bottom Bar) */}
-      <div className="shrink-0 sticky bottom-0 z-20 bg-slate-100/95 backdrop-blur-md px-4 py-2.5 border-t border-slate-300 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] flex flex-wrap items-center justify-between text-xs text-slate-700 gap-2 font-bold">
-        <div className="flex items-center flex-wrap gap-3">
-          <span>الصفوف المعروضة: <strong className="text-slate-900">{filteredOrders.length}</strong> من إجمالي <strong className="text-slate-900">{orders.length}</strong></span>
-          <span>•</span>
-          <span className="text-emerald-700 font-semibold">
-            مؤهل للاغلاق ( معتمد ): {filteredOrders.filter(w => !String(w.procedure155Status || '').includes('غير') && (String(w.procedure155Status || '').includes('مؤهل') || String(w.procedure155Status || '').includes('معتمد') || String(w.procedure155Status || '').includes('تم'))).length}
-          </span>
-          <span>•</span>
-          <span className="text-rose-700 font-semibold">
-            غير مؤهل للأغلاق: {filteredOrders.filter(w => String(w.procedure155Status || '').includes('غير') || !(String(w.procedure155Status || '').includes('مؤهل') || String(w.procedure155Status || '').includes('معتمد') || String(w.procedure155Status || '').includes('تم'))).length}
-          </span>
-          <span>•</span>
-          <span className="text-blue-700 font-semibold">
-            عدد الأعمدة: {columns.length}
-          </span>
-          {totalDuplicateRowsCount > 0 && (
-            <>
-              <span>•</span>
-              <span className="text-blue-900 font-black flex items-center gap-1 bg-blue-100 px-2.5 py-0.5 rounded-lg border border-blue-300">
-                <AlertTriangle className="w-3.5 h-3.5 text-blue-700" />
-                <span>صفوف مكررة (مظللة بالأزرق): {totalDuplicateRowsCount} (الحذف يدوي للمستخدم فقط دون حذف تلقائي)</span>
-              </span>
-            </>
-          )}
-          {selectedOrder && (
-            <>
-              <span>•</span>
-              <span className="text-amber-950 font-bold bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-md flex items-center gap-1.5 shadow-2xs">
-                <span className="text-emerald-700 font-black">✓</span>
-                <span>الصف المحدد بالعلامة (✓) لتحديث الحالة:</span>
-                <span className="font-mono font-black">{selectedOrder.workOrderNumber}</span>
-                <span className="text-amber-800 font-medium">({selectedOrder.office} - {selectedOrder.contractor}{selectedOrder.consultant ? ` - ${selectedOrder.consultant}` : ''})</span>
-              </span>
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-3 text-[11px] text-slate-500">
-          <span className="inline-flex items-center gap-1 text-emerald-700 font-bold">
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>نظام الاعتماد الرقمي المعتمد 155</span>
-          </span>
-          <span>•</span>
-          <span>المزامنة السحابية الحية مفعلة</span>
-        </div>
-      </div>
+
 
       {/* Floating Multi-Selection Action Dock (قاعدة الإجراءات الجماعية السريعة) */}
       {selectedOrderIds.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-950/95 text-white px-4 sm:px-6 py-3 rounded-2xl shadow-2xl border border-slate-700 backdrop-blur-md flex flex-wrap items-center justify-center gap-2 sm:gap-3 animate-in fade-in slide-in-from-bottom-5 duration-200">
-          <div className="flex items-center gap-2 pl-3 border-l border-slate-800 shrink-0">
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-400 animate-pulse" />
-            <span className="text-xs font-bold text-slate-200">
-              تم تحديد <strong className="text-white font-mono text-sm px-1.5 py-0.5 rounded bg-blue-600/70">{selectedOrderIds.size}</strong> أمر عمل
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-gradient-to-r from-[#001D40] via-[#002855] to-[#001D40] text-white px-4 sm:px-6 py-3 rounded-2xl shadow-2xl border-2 border-[#F58220] backdrop-blur-md flex flex-wrap items-center justify-center gap-2 sm:gap-3 animate-in fade-in slide-in-from-bottom-5 duration-200 ring-4 ring-[#002855]/40">
+          <div className="flex items-center gap-2 pl-3 border-l border-white/15 shrink-0">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#FDB813] animate-pulse" />
+            <span className="text-xs font-black text-blue-100">
+              تم تحديد <strong className="text-slate-950 font-mono text-sm px-2 py-0.5 rounded-lg bg-[#FDB813] font-black">{selectedOrderIds.size}</strong> أمر عمل
             </span>
           </div>
 
@@ -5472,7 +5689,7 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
         />
       )}
 
-      {/* Audit Checklist Modal for PDC Audit & Construction Audit (تدقيق PDC وتدقيق الإنشاءات - 18 قائمة تحقق رسمية مع تزامن فوري) */}
+      {/* Audit Checklist Modal for PDC Audit & Construction Audit (القائمة الأساسية الموحدة + مراحل التدقيق للاطلاع مع تزامن فوري) */}
       {activeAuditModal && (
         <AuditChecklistModal
           isOpen={Boolean(activeAuditModal)}
@@ -5480,6 +5697,8 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
           columnField={activeAuditModal.columnField}
           columnTitle={activeAuditModal.columnTitle}
           initialCategoryKey={activeAuditModal.initialCategoryKey}
+          initialFocusField={activeAuditModal.initialFocusField}
+          initialOpenStages={activeAuditModal.initialOpenStages}
           onClose={() => setActiveAuditModal(null)}
           canEdit={canUserEditColumn(currentUser, activeAuditModal.columnField)}
           onSave={async (updatedAuditData, shouldClose = false) => {
@@ -5495,6 +5714,16 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
               setActiveAuditModal(null);
             }
           }}
+        />
+      )}
+
+      {/* نافذة مراحل التدقيق المنبثقة للاطلاع فقط (عند الضغط على أيقونة مراحل التدقيق في الركن العلوي لبطاقة التدقيق) */}
+      {activeStagesReferenceModal && (
+        <AuditStagesReferenceModal
+          isOpen={Boolean(activeStagesReferenceModal)}
+          onClose={() => setActiveStagesReferenceModal(null)}
+          order={orders.find(o => o.id === activeStagesReferenceModal.order.id) || activeStagesReferenceModal.order}
+          columnTitle={activeStagesReferenceModal.columnTitle}
         />
       )}
 
@@ -5518,8 +5747,17 @@ export const WorkOrdersTable: React.FC<WorkOrdersTableProps> = ({
 
   if (internalPresentationMode === 'overlay') {
     return (
-      <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md p-2 sm:p-4 flex flex-col justify-center items-center overflow-y-auto animate-in fade-in duration-200">
-        <div className="w-full max-w-[98vw] max-h-[96vh] flex flex-col shadow-2xl">
+      <div
+        className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md p-2 sm:p-4 flex flex-col justify-center items-center overflow-y-auto animate-in fade-in duration-200"
+        onClick={() => {
+          setInternalPresentationMode('docked');
+          if (onChangePresentationMode) onChangePresentationMode('docked');
+        }}
+      >
+        <div
+          className="w-full max-w-[98vw] max-h-[96vh] flex flex-col shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
           {tableInnerContent}
         </div>
       </div>

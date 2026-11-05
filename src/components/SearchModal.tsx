@@ -70,17 +70,15 @@ export const SearchModal: React.FC<SearchModalProps> = ({
         (wo.form200 && String(wo.form200).toLowerCase().includes(term)) ||
         (wo.inspectionForm && String(wo.inspectionForm).toLowerCase().includes(term)) ||
         (wo.qualityNotes && wo.qualityNotes.toLowerCase().includes(term)) ||
-        (wo.executionNotes && wo.executionNotes.toLowerCase().includes(term)) ||
-        (wo.executionStatus && wo.executionStatus.toLowerCase().includes(term))
+        (wo.executionNotes && wo.executionNotes.toLowerCase().includes(term))
       );
 
       const matchesOffice = selectedOfficeFilter === 'all' || wo.office === selectedOfficeFilter;
-      const matchesStatus = selectedStatusFilter === 'all' || wo.executionStatus === selectedStatusFilter;
       const matchesProc155 = selectedProc155Filter === 'all' || wo.procedure155Status === selectedProc155Filter;
 
-      return matchesSearch && matchesOffice && matchesStatus && matchesProc155;
+      return matchesSearch && matchesOffice && matchesProc155;
     });
-  }, [workOrders, searchTerm, selectedOfficeFilter, selectedStatusFilter, selectedProc155Filter]);
+  }, [workOrders, searchTerm, selectedOfficeFilter, selectedProc155Filter]);
 
   // Unique lists for quick filters
   const officesList = Array.from(new Set(workOrders.map(w => w.office)));
@@ -230,9 +228,8 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                     <th className="py-3 px-3">الاستشاري</th>
                     <th className="py-3 px-3">رقم أمر العمل</th>
                     <th className="py-3 px-3">نوع أمر العمل</th>
-                    <th className="py-3 px-3">حالة التنفيذ</th>
                     <th className="py-3 px-3 text-center">تنسيق الصور</th>
-                    <th className="py-3 px-3 min-w-[200px]">ملاحظات التنفيذ</th>
+                    <th className="py-3 px-3 min-w-[200px]">ملاحظات الجودة</th>
                     <th className="py-3 px-3">تعديل المقايسة على النظام</th>
                     <th className="py-3 px-3">إجراء 155</th>
                     <th className="py-3 px-3 text-center">إجراءات</th>
@@ -260,19 +257,6 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                         </td>
                         <td className="py-3 px-3 font-mono font-bold text-slate-800 whitespace-nowrap">
                           {wo.workOrderCode}
-                        </td>
-                        <td className="py-3 px-3 whitespace-nowrap">
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-black ${
-                            wo.executionStatus === 'جاهز للاستلام 155'
-                              ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                              : wo.executionStatus === 'معلق لنواقص'
-                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                              : wo.executionStatus === 'مرفوض'
-                              ? 'bg-rose-100 text-rose-900 border border-rose-300'
-                              : 'bg-blue-100 text-blue-900 border border-blue-300'
-                          }`}>
-                            {wo.executionStatus}
-                          </span>
                         </td>
                         <td className="py-3 px-3 text-center whitespace-nowrap">
                           <div className="inline-flex items-center gap-1.5 justify-center flex-wrap">

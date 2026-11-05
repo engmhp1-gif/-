@@ -167,10 +167,6 @@ export const CrossTableMatchModal: React.FC<CrossTableMatchModalProps> = ({
                   <span className="font-black text-slate-800">{currentOrder.contractor || '-'}</span>
                 </div>
                 <div className="flex items-center justify-between py-1 border-b border-slate-200/60">
-                  <span className="text-slate-500 font-bold">حالة التنفيذ:</span>
-                  <span className="font-black text-slate-800">{currentOrder.executionStatus || '-'}</span>
-                </div>
-                <div className="flex items-center justify-between py-1 border-b border-slate-200/60">
                   <span className="text-slate-500 font-bold">حالة إجراء 155:</span>
                   <span className="font-black text-slate-800">{currentOrder.procedure155Status || '-'}</span>
                 </div>
@@ -211,10 +207,6 @@ export const CrossTableMatchModal: React.FC<CrossTableMatchModalProps> = ({
                 <div className="flex items-center justify-between py-1 border-b border-orange-200/60">
                   <span className="text-orange-800 font-bold">المقاول:</span>
                   <span className="font-black text-slate-900">{sourceOrder.contractor || '-'}</span>
-                </div>
-                <div className="flex items-center justify-between py-1 border-b border-orange-200/60">
-                  <span className="text-orange-800 font-bold">حالة التنفيذ:</span>
-                  <span className="font-black text-emerald-700">{sourceOrder.executionStatus || '-'}</span>
                 </div>
                 <div className="flex items-center justify-between py-1 border-b border-orange-200/60">
                   <span className="text-orange-800 font-bold">حالة إجراء 155:</span>
@@ -308,16 +300,6 @@ export const CrossTableMatchModal: React.FC<CrossTableMatchModalProps> = ({
                   className="w-4 h-4 text-orange-600 rounded focus:ring-orange-500"
                 />
                 <span className="font-bold text-slate-800">حالة إجراء 155 والمزامنة</span>
-              </label>
-
-              <label className="flex items-center gap-2 p-2 rounded-xl bg-white border border-orange-200 cursor-pointer hover:border-orange-400 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={copyExecutionStatus}
-                  onChange={(e) => setCopyExecutionStatus(e.target.checked)}
-                  className="w-4 h-4 text-orange-600 rounded focus:ring-orange-500"
-                />
-                <span className="font-bold text-slate-800">حالة التنفيذ الميداني ونسبة الإنجاز</span>
               </label>
 
               <label className="flex items-center gap-2 p-2 rounded-xl bg-white border border-orange-200 cursor-pointer hover:border-orange-400 transition-colors">
